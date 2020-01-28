@@ -389,6 +389,7 @@ void slsi_mlme_nan_store_config(struct netdev_vif *ndev_vif, struct slsi_hal_nan
 	ndev_vif->nan.config.scan_params_val.scan_period[1] = hal_req->scan_params_val.scan_period[1];
 	ndev_vif->nan.config.config_5g_dw_band = (u16)hal_req->config_5g_dw_band;
 	ndev_vif->nan.config.dw_5g_interval_val = hal_req->dw_5g_interval_val;
+	ndev_vif->nan.state = 1;
 }
 
 int slsi_mlme_nan_enable(struct slsi_dev *sdev, struct net_device *dev, struct slsi_hal_nan_enable_req *hal_req)
@@ -1129,6 +1130,7 @@ int slsi_mlme_ndp_terminate(struct slsi_dev *sdev, struct net_device *dev, u16 n
 	struct sk_buff    *req;
 	struct sk_buff    *cfm;
 	u16               ndl_vif_id;
+	int               ret = 0;
 
 	if (ndev_vif->nan.ndp_state[ndp_id - 1] != ndp_slot_status_in_use) {
 		slsi_nan_ndp_termination_handler(sdev, dev, ndp_id, ndl_vif_id, ndev_vif->nan.ndp_ndi[ndp_id - 1]);
@@ -1155,8 +1157,9 @@ int slsi_mlme_ndp_terminate(struct slsi_dev *sdev, struct net_device *dev, u16 n
 		SLSI_NET_ERR(dev, "MLME_NDP_TERMINATE_CFM(res:0x%04x)\n",
 			     fapi_get_u16(cfm, u.mlme_ndp_terminate_cfm.result_code));
 		slsi_nan_ndp_termination_handler(sdev, dev, ndp_id, ndl_vif_id, ndev_vif->nan.ndp_ndi[ndp_id - 1]);
+		ret = 1;
 	}
 
 	slsi_kfree_skb(cfm);
-	return 0;
+	return ret;
 }

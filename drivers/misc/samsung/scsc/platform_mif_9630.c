@@ -33,7 +33,7 @@
 #include "platform_mif_module.h"
 #include "mxman.h"
 #include "miframman.h"
-#ifdef CONFIG_ARCH_EXYNOS
+#if defined(CONFIG_ARCH_EXYNOS) || defined(CONFIG_ARCH_EXYNOS9)
 #include <linux/soc/samsung/exynos-soc.h>
 #endif
 #ifdef CONFIG_SOC_EXYNOS9630
@@ -62,6 +62,15 @@
 #ifdef CONFIG_OF_RESERVED_MEM
 #include <linux/of_reserved_mem.h>
 #endif
+
+#ifdef CONFIG_EXYNOS_ITMON
+#include <soc/samsung/exynos-itmon.h>
+#endif
+
+#if defined(CONFIG_S3C2410_WATCHDOG) && defined(CONFIG_DEBUG_SNAPSHOT)
+#include <soc/samsung/exynos-debug.h>
+#endif
+
 static unsigned long sharedmem_base;
 static size_t sharedmem_size;
 
@@ -173,9 +182,14 @@ struct platform_mif {
 	int (*suspend_handler)(struct scsc_mif_abs *abs, void *data);
 	void (*resume_handler)(struct scsc_mif_abs *abs, void *data);
 	void *suspendresume_data;
+
+#ifdef CONFIG_EXYNOS_ITMON
+	struct notifier_block itmon_nb;
+#endif
 };
 
 static void power_supplies_on(struct platform_mif *platform);
+inline void platform_int_debug(struct platform_mif *platform);
 
 extern int mx140_log_dump(void);
 
@@ -596,7 +610,9 @@ irqreturn_t platform_wdog_isr(int irq, void *data)
 	int ret = 0;
 	struct platform_mif *platform = (struct platform_mif *)data;
 
-	SCSC_TAG_INFO_DEV(PLAT_MIF, platform->dev, "INT received\n");
+	SCSC_TAG_INFO_DEV(PLAT_MIF, platform->dev, "INT received %d\n", irq);
+	platform_int_debug(platform);
+
 	if (platform->reset_request_handler != platform_mif_irq_reset_request_default_handler) {
 		if (platform->boot_state == WLBT_BOOT_WAIT_CFG_REQ) {
 			/* Spurious interrupt from the SOC during CFG_REQ phase, just consume it */
@@ -1034,16 +1050,6 @@ static void wlbt_regdump(struct platform_mif *platform)
 
 	regmap_read(platform->i3c_apm_pmic, VGPIO_TX_MONITOR, &val);
 	SCSC_TAG_INFO(PLAT_MIF, "VGPIO_TX_MONITOR 0x%x\n", val);
-
-#if 0
-	/* Delay to let PMU process the cfg_ack */
-	udelay(10000);
-	regmap_read(platform->boot_cfg, 0x0, &val);
-	SCSC_TAG_INFO(PLAT_MIF, "BOOT_SOURCE 0x%x\n", val);
-
-	regmap_read(platform->boot_cfg, 0x4, &val);
-	SCSC_TAG_INFO(PLAT_MIF, "BOOT_CFG_ACK 0x%x\n", val);
-#endif
 }
 
 /* WLBT START */
@@ -1077,8 +1083,6 @@ static int platform_mif_start(struct scsc_mif_abs *interface, bool start)
 		wlbt_regdump(platform);
 		return -ETIMEDOUT;
 	}
-
-	wlbt_regdump(platform);
 
 	/* only continue if CFG_REQ IRQ configured WLBT/PMU correctly */
 	if (platform->boot_state == WLBT_BOOT_CFG_ERROR) {
@@ -1381,7 +1385,7 @@ static int platform_mif_reset(struct scsc_mif_abs *interface, bool reset)
 
 	if (enable_platform_mif_arm_reset || !reset) {
 		if (!reset) { /* Release from reset */
-#ifdef CONFIG_ARCH_EXYNOS
+#if defined(CONFIG_ARCH_EXYNOS) || defined(CONFIG_ARCH_EXYNOS9)
 			SCSC_TAG_INFO_DEV(PLAT_MIF, platform->dev,
 				"SOC_VERSION: product_id 0x%x, rev 0x%x\n",
 				exynos_soc_info.product_id, exynos_soc_info.revision);
@@ -1817,17 +1821,40 @@ static void platform_mif_dump_register(struct scsc_mif_abs *interface)
 	spin_lock_irqsave(&platform->mif_spinlock, flags);
 
 	SCSC_TAG_INFO_DEV(PLAT_MIF, platform->dev, "INTGR0 0x%08x\n", platform_mif_reg_read(platform, MAILBOX_WLBT_REG(INTGR0)));
-	SCSC_TAG_INFO_DEV(PLAT_MIF, platform->dev, "INTGR1 0x%08x\n", platform_mif_reg_read(platform, MAILBOX_WLBT_REG(INTGR1)));
 	SCSC_TAG_INFO_DEV(PLAT_MIF, platform->dev, "INTCR0 0x%08x\n", platform_mif_reg_read(platform, MAILBOX_WLBT_REG(INTCR0)));
-	SCSC_TAG_INFO_DEV(PLAT_MIF, platform->dev, "INTCR1 0x%08x\n", platform_mif_reg_read(platform, MAILBOX_WLBT_REG(INTCR1)));
 	SCSC_TAG_INFO_DEV(PLAT_MIF, platform->dev, "INTMR0 0x%08x\n", platform_mif_reg_read(platform, MAILBOX_WLBT_REG(INTMR0)));
-	SCSC_TAG_INFO_DEV(PLAT_MIF, platform->dev, "INTMR1 0x%08x\n", platform_mif_reg_read(platform, MAILBOX_WLBT_REG(INTMR1)));
 	SCSC_TAG_INFO_DEV(PLAT_MIF, platform->dev, "INTSR0 0x%08x\n", platform_mif_reg_read(platform, MAILBOX_WLBT_REG(INTSR0)));
-	SCSC_TAG_INFO_DEV(PLAT_MIF, platform->dev, "INTSR1 0x%08x\n", platform_mif_reg_read(platform, MAILBOX_WLBT_REG(INTSR1)));
 	SCSC_TAG_INFO_DEV(PLAT_MIF, platform->dev, "INTMSR0 0x%08x\n", platform_mif_reg_read(platform, MAILBOX_WLBT_REG(INTMSR0)));
+
+	SCSC_TAG_INFO_DEV(PLAT_MIF, platform->dev, "INTGR1 0x%08x\n", platform_mif_reg_read(platform, MAILBOX_WLBT_REG(INTGR1)));
+	SCSC_TAG_INFO_DEV(PLAT_MIF, platform->dev, "INTCR1 0x%08x\n", platform_mif_reg_read(platform, MAILBOX_WLBT_REG(INTCR1)));
+	SCSC_TAG_INFO_DEV(PLAT_MIF, platform->dev, "INTMR1 0x%08x\n", platform_mif_reg_read(platform, MAILBOX_WLBT_REG(INTMR1)));
+	SCSC_TAG_INFO_DEV(PLAT_MIF, platform->dev, "INTSR1 0x%08x\n", platform_mif_reg_read(platform, MAILBOX_WLBT_REG(INTSR1)));
 	SCSC_TAG_INFO_DEV(PLAT_MIF, platform->dev, "INTMSR1 0x%08x\n", platform_mif_reg_read(platform, MAILBOX_WLBT_REG(INTMSR1)));
 
 	spin_unlock_irqrestore(&platform->mif_spinlock, flags);
+}
+
+inline void platform_int_debug(struct platform_mif *platform)
+{
+	int i;
+	int irq;
+	int ret;
+	bool pending, active, masked;
+	int irqs[] = {PLATFORM_MIF_MBOX, PLATFORM_MIF_WDOG};
+	char *irqs_name[] = {"MBOX", "WDOG"};
+
+	for (i = 0; i < (sizeof(irqs) / sizeof(int)); i++) {
+		irq = platform->wlbt_irq[irqs[i]].irq_num;
+
+		ret  = irq_get_irqchip_state(irq, IRQCHIP_STATE_PENDING, &pending);
+		ret |= irq_get_irqchip_state(irq, IRQCHIP_STATE_ACTIVE,  &active);
+		ret |= irq_get_irqchip_state(irq, IRQCHIP_STATE_MASKED,  &masked);
+		if (!ret)
+			SCSC_TAG_INFO_DEV(PLAT_MIF, platform->dev, "IRQCHIP_STATE %d(%s): pending %d, active %d, masked %d",
+							  irq, irqs_name[i], pending, active, masked);
+	}
+	platform_mif_dump_register(&platform->interface);
 }
 
 static void platform_mif_cleanup(struct scsc_mif_abs *interface)
@@ -1849,6 +1876,41 @@ static int __init platform_mif_wifibt_if_reserved_mem_setup(struct reserved_mem 
 	return 0;
 }
 RESERVEDMEM_OF_DECLARE(wifibt_if, "exynos,wifibt_if", platform_mif_wifibt_if_reserved_mem_setup);
+#endif
+
+#ifdef CONFIG_EXYNOS_ITMON
+static int wlbt_itmon_notifier(struct notifier_block *nb,
+		unsigned long action, void *nb_data)
+{
+	struct platform_mif *platform = container_of(nb, struct platform_mif, itmon_nb);
+	int ret = NOTIFY_DONE;
+	struct itmon_notifier *itmon_data = (struct itmon_notifier *)nb_data;
+
+	if(!itmon_data) {
+		SCSC_TAG_ERR_DEV(PLAT_MIF, platform->dev, "itmon_data is NULL");
+		goto error_exit;
+	}
+
+	if (itmon_data->dest &&
+		(!strncmp("WLBT", itmon_data->dest, sizeof("WLBT") - 1))) {
+		wlbt_regdump(platform);
+#if defined(CONFIG_S3C2410_WATCHDOG) && defined(CONFIG_DEBUG_SNAPSHOT)
+		s3c2410wdt_set_emergency_reset(0, 0);
+#endif
+		ret = NOTIFY_BAD;
+	} else if (itmon_data->port &&
+		(!strncmp("WLBT", itmon_data->port, sizeof("WLBT") - 1))) {
+		wlbt_regdump(platform);
+		ret = NOTIFY_OK;
+	} else if (itmon_data->master &&
+		(!strncmp("WLBT", itmon_data->master, sizeof("WLBT") - 1))) {
+		wlbt_regdump(platform);
+		ret = NOTIFY_OK;
+	}
+
+error_exit:
+	return ret;
+}
 #endif
 
 struct scsc_mif_abs *platform_mif_create(struct platform_device *pdev)
@@ -2107,6 +2169,10 @@ struct scsc_mif_abs *platform_mif_create(struct platform_device *pdev)
 	/* Initialize spinlock */
 	spin_lock_init(&platform->mif_spinlock);
 
+#ifdef CONFIG_EXYNOS_ITMON
+	platform->itmon_nb.notifier_call = wlbt_itmon_notifier;
+	itmon_notifier_chain_register(&platform->itmon_nb);
+#endif
 	return platform_if;
 
 error_exit:

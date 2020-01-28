@@ -27,7 +27,7 @@ static struct wake_lock wlbtd_wakelock;
 /* module parameter controlling recovery handling */
 extern int disable_recovery_handling;
 
-const char *response_code_to_str(int response_code)
+const char *response_code_to_str(enum scsc_wlbtd_response_codes response_code)
 {
 	switch (response_code) {
 	case SCSC_WLBTD_ERR_PARSE_FAILED:
@@ -90,17 +90,19 @@ static int msg_from_wlbtd_cb(struct sk_buff *skb, struct genl_info *info)
 
 static int msg_from_wlbtd_sable_cb(struct sk_buff *skb, struct genl_info *info)
 {
-	int status = 0;
+	enum scsc_wlbtd_response_codes status = 0;
 	const char *data = (const char *)nla_data(info->attrs[1]);
 
 	if (info->attrs[1])
 		SCSC_TAG_INFO(WLBTD, "%s\n", data);
 
 	if (info->attrs[2]) {
-		status = nla_get_u16(info->attrs[2]);
-		SCSC_TAG_ERR(WLBTD, "%s\n", response_code_to_str(status));
+		status = (enum scsc_wlbtd_response_codes) nla_get_u16(info->attrs[2]);
+		if (status < SCSC_WLBTD_LAST_RESPONSE_CODE)
+			SCSC_TAG_ERR(WLBTD, "%s\n", response_code_to_str(status));
+		else
+			SCSC_TAG_INFO(WLBTD, "Received invalid status value");
 	}
-
 	/* completion cases :
 	 * 1) FW_PANIC_TAR_GENERATED
 	 *    for trigger scsc_log_fw_panic only one response from wlbtd when

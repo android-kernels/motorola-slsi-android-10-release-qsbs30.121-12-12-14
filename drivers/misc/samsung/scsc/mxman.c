@@ -54,6 +54,10 @@ static struct work_struct	wlbtd_work;
 
 #include "scsc_lerna.h"
 
+#if defined(CONFIG_S3C2410_WATCHDOG) && defined(CONFIG_DEBUG_SNAPSHOT)
+#include <soc/samsung/exynos-debug.h>
+#endif
+
 #include <asm/page.h>
 #include <scsc/api/bt_audio.h>
 
@@ -153,6 +157,8 @@ MODULE_PARM_DESC(disable_auto_coredump, "Disable driver automatic coredump");
 static bool disable_error_handling;
 module_param(disable_error_handling, bool, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(disable_error_handling, "Disable error handling");
+
+#define DISABLE_RECOVERY_HANDLING_SCANDUMP 3 /* Halt kernel and scandump on FW failure */
 
 #if defined(SCSC_SEP_VERSION) && (SCSC_SEP_VERSION >= 100000)
 int disable_recovery_handling = 2; /* MEMDUMP_FILE_FOR_RECOVERY : for /sys/wifi/memdump */
@@ -2303,6 +2309,17 @@ void mxman_syserr(struct mxman *mxman, struct mx_syserr_decode *syserr)
 void mxman_fail(struct mxman *mxman, u16 scsc_panic_code, const char *reason)
 {
 	SCSC_TAG_WARNING(MXMAN, "WLBT FW failure\n");
+
+	if (disable_recovery_handling == DISABLE_RECOVERY_HANDLING_SCANDUMP) {
+#if defined(CONFIG_S3C2410_WATCHDOG) && defined(CONFIG_DEBUG_SNAPSHOT)
+		SCSC_TAG_WARNING(MXMAN, "WLBT FW failure - halt Exynos kernel for scandump!\n");
+		s3c2410wdt_set_emergency_reset(0, 0);
+#else
+		/* Support not present, fallback to vanilla moredump and stop WLBT */
+		disable_recovery_handling = 1;
+		SCSC_TAG_WARNING(MXMAN, "WLBT FW failure - scandump requested but not supported in kernel\n");
+#endif
+	}
 
 	/* The STARTING state allows a crash during firmware boot to be handled */
 	if (mxman->mxman_state == MXMAN_STATE_STARTED || mxman->mxman_state == MXMAN_STATE_STARTING) {

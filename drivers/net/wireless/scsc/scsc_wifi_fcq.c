@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2012 - 2019 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2012 - 2020 Samsung Electronics Co., Ltd. All rights reserved
  *
  *****************************************************************************/
 
@@ -218,6 +218,52 @@ void scsc_wifi_fcq_unpause_queues(struct slsi_dev *sdev)
 	atomic_set(&sdev->in_pause_state, 0);
 	fcq_wake_all_queues(sdev);
 }
+
+#ifdef CONFIG_SCSC_WLAN_ARP_FLOW_CONTROL
+static inline void fcq_stop_ctrl_q_all_vif(struct slsi_dev *sdev)
+{
+	struct peers_cache *pc_node, *next;
+
+	spin_lock_bh(&peers_cache_lock);
+	list_for_each_entry_safe(pc_node, next, &peers_cache_list, list) {
+		netif_stop_subqueue(pc_node->dev, 0);
+		SLSI_INFO(sdev, "Ctrl_q stop for %s\n", pc_node->dev->name);
+	}
+	spin_unlock_bh(&peers_cache_lock);
+}
+
+static inline void fcq_wake_ctrl_q_all_vif(struct slsi_dev *sdev)
+{
+	struct peers_cache *pc_node, *next;
+
+	spin_lock_bh(&peers_cache_lock);
+	list_for_each_entry_safe(pc_node, next, &peers_cache_list, list) {
+		netif_wake_subqueue(pc_node->dev, 0);
+		SLSI_INFO(sdev, "Ctrl_q wake for %s\n", pc_node->dev->name);
+	}
+	spin_unlock_bh(&peers_cache_lock);
+}
+
+void scsc_wifi_pause_ctrl_q_all_vif(struct slsi_dev *sdev)
+{
+	if (!sdev)
+		return;
+
+	SLSI_DBG4_NODEV(SLSI_WIFI_FCQ, "Pause Ctrl queues\n");
+	atomic_set(&sdev->ctrl_pause_state, 1);
+	fcq_stop_ctrl_q_all_vif(sdev);
+}
+
+void scsc_wifi_unpause_ctrl_q_all_vif(struct slsi_dev *sdev)
+{
+	if (!sdev)
+		return;
+
+	SLSI_DBG4_NODEV(SLSI_WIFI_FCQ, "Unpause ctrl queues\n");
+	atomic_set(&sdev->ctrl_pause_state, 0);
+	fcq_wake_ctrl_q_all_vif(sdev);
+}
+#endif
 
 #ifdef ENABLE_QCOD
 /* Detects AC queues that have stopped and redistributes the qmod

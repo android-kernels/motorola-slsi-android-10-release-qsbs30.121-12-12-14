@@ -2094,10 +2094,13 @@ static ssize_t slsi_set_pmk(struct net_device *dev, char *command, int buf_len)
 {
 	struct netdev_vif *ndev_vif = netdev_priv(dev);
 	struct slsi_dev   *sdev = ndev_vif->sdev;
-	u8                pmk[33];
+	u8                pmk[33] = {0};
 	int               result = 0;
 
-	memcpy((u8 *)pmk, command + strlen("SET_PMK "), 32);
+	if ((buf_len - (strlen(CMD_SET_PMK) + 1)) < 32)
+		return -EINVAL;
+
+	memcpy((u8 *)pmk, command + (strlen(CMD_SET_PMK) + 1), 32);
 	SLSI_MUTEX_LOCK(ndev_vif->vif_mutex);
 
 	result = slsi_mlme_set_pmk(sdev, dev, pmk, 32);
@@ -3074,7 +3077,7 @@ static int slsi_enhanced_arp_start_stop(struct net_device *dev, char *command, i
 	SLSI_MUTEX_LOCK(ndev_vif->vif_mutex);
 	if (ndev_vif->vif_type != FAPI_VIFTYPE_STATION) {
 		SLSI_ERR(sdev, "Not in STA mode\n");
-		SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex)
+		SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 		return -EPERM;
 	}
 
@@ -3091,6 +3094,7 @@ static int slsi_enhanced_arp_start_stop(struct net_device *dev, char *command, i
 		/* reset all the counters in host and firmware */
 		slsi_read_enhanced_arp_rx_count_by_lower_mac(sdev, dev, SLSI_PSID_UNIFI_ARP_DETECT_RESPONSE_COUNTER);
 		memset(&ndev_vif->enhanced_arp_stats, 0, sizeof(ndev_vif->enhanced_arp_stats));
+		memset(ndev_vif->enhanced_arp_host_tag, 0, sizeof(ndev_vif->enhanced_arp_host_tag));
 		ndev_vif->enhanced_arp_detect_enabled = true;
 		result = slsi_mlme_arp_detect_request(sdev, dev, FAPI_ACTION_START, ndev_vif->target_ip_addr);
 	} else { /* stop enhanced arp detect */
@@ -3139,6 +3143,7 @@ int slsi_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 	struct android_wifi_priv_cmd priv_cmd;
 	int                          ret = 0;
 	u8                           *command = NULL;
+	struct netdev_vif *ndev_vif = netdev_priv(dev);
 
 	if (!dev) {
 		ret = -ENODEV;
@@ -3367,6 +3372,7 @@ int slsi_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 		if (skip <= priv_cmd.total_len) {
 			ret = slsi_auto_chan_write(dev, command + skip);
 		}
+		ndev_vif->acs = true;
 	} else if (strncasecmp(command, CMD_SENDACTIONFRAME, strlen(CMD_SENDACTIONFRAME)) == 0) {
 		int skip = strlen(CMD_SENDACTIONFRAME) + 1;
 

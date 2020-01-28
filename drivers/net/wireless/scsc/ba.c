@@ -9,9 +9,14 @@
 #include "ba.h"
 #include "mgt.h"
 
-/* Age value for frames in MPDU reorder buffer */
-static int ba_mpdu_reorder_age_timeout = 150; /* 150 milli seconds */
-module_param(ba_mpdu_reorder_age_timeout, int, S_IRUGO | S_IWUSR);
+/* Timeout (in milliseconds) for frames in MPDU reorder buffer
+ *
+ * When a frame is out of order, the frame is stored in Reorder buffer.
+ * Frames can be released from the buffer, if subsequent frames arrive such that
+ * frames can be ordered or when this timeout occurs
+ */
+static uint ba_mpdu_reorder_age_timeout = 100; /* 100 milliseconds */
+module_param(ba_mpdu_reorder_age_timeout, uint, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(ba_mpdu_reorder_age_timeout, "Timeout (in ms) before a BA frame in Reorder buffer is passed to upper layers");
 
 #define BA_WINDOW_BOUNDARY 2048

@@ -452,6 +452,8 @@ int slsi_scan(struct wiphy *wiphy, struct net_device *dev,
 	struct ieee80211_channel  *channels[64];
 	int                       i, chan_count = 0;
 	struct cfg80211_scan_info info = {.aborted = false};
+	bool                      wps_sta_not_radomize_mac = false;
+
 #ifdef CONFIG_SCSC_WLAN_ENABLE_MAC_RANDOMISATION
 	u8 mac_addr_mask[ETH_ALEN] = {0xFF};
 #endif
@@ -565,9 +567,12 @@ int slsi_scan(struct wiphy *wiphy, struct net_device *dev,
 		 */
 
 		ie = cfg80211_find_vendor_ie(WLAN_OUI_MICROSOFT, WLAN_OUI_TYPE_MICROSOFT_WPS, request->ie, request->ie_len);
-		if (ie && ie[1] > SLSI_WPS_REQUEST_TYPE_POS &&
-		    ie[SLSI_WPS_REQUEST_TYPE_POS] == SLSI_WPS_REQUEST_TYPE_ENROLEE_INFO_ONLY)
-			strip_wsc = true;
+		if (ie && ie[1] > SLSI_WPS_REQUEST_TYPE_POS) {
+		    if (ie[SLSI_WPS_REQUEST_TYPE_POS] == SLSI_WPS_REQUEST_TYPE_ENROLEE_INFO_ONLY)
+				strip_wsc = true;
+			else
+				wps_sta_not_radomize_mac = true;
+		}
 
 		ie = cfg80211_find_vendor_ie(WLAN_OUI_WFA, WLAN_OUI_TYPE_WFA_P2P, request->ie, request->ie_len);
 		if (ie)
@@ -594,6 +599,13 @@ int slsi_scan(struct wiphy *wiphy, struct net_device *dev,
 	slsi_purge_scan_results(ndev_vif, SLSI_SCAN_HW_ID);
 
 #ifdef CONFIG_SCSC_WLAN_ENABLE_MAC_RANDOMISATION
+	/* If Supplicant triggers WPS scan on station interface,
+	 * mac radomization for scan should be disbaled to avoid WPS overlap.
+         * Firmware also disables Mac Randomization for WPS Scan.
+	 */
+	if (wps_sta_not_radomize_mac && SLSI_IS_VIF_INDEX_WLAN(ndev_vif))
+		sdev->scan_addr_set = 0;
+	else {
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0))
                 //BEGIN IKSAMP-1972
                 if (!slsi_dev_mac_randomisation_support()) {
@@ -617,6 +629,7 @@ int slsi_scan(struct wiphy *wiphy, struct net_device *dev,
 			r = slsi_set_mac_randomisation_mask(sdev, mac_addr_mask);
 			sdev->scan_addr_set = 0;
 		}
+	}
 #endif
 
 	r = slsi_mlme_add_scan(sdev,
@@ -1022,31 +1035,33 @@ int slsi_connect(struct wiphy *wiphy, struct net_device *dev,
 		SLSI_NET_DBG3(dev, SLSI_CFG80211, "BSS info is not available - Perform scan\n");
 		ssid.ssid_len = sme->ssid_len;
 		memcpy(ssid.ssid, sme->ssid, ssid.ssid_len);
-		r = slsi_mlme_connect_scan(sdev, dev, 1, &ssid, sme->channel);
-		if (r) {
-			SLSI_NET_ERR(dev, "slsi_mlme_connect_scan failed\n");
-			goto exit;
-		}
-		ndev_vif->sta.sta_bss = cfg80211_get_bss(wiphy,
-							sme->channel,
-							sme->bssid,
-							sme->ssid,
-							sme->ssid_len,
+		if (!(ssid.ssid_len > 0 && sme->channel)) {
+			r = slsi_mlme_connect_scan(sdev, dev, 1, &ssid, sme->channel);
+			if (r) {
+				SLSI_NET_ERR(dev, "slsi_mlme_connect_scan failed\n");
+				goto exit;
+			}
+			ndev_vif->sta.sta_bss = cfg80211_get_bss(wiphy,
+								 sme->channel,
+								 sme->bssid,
+								 sme->ssid,
+								 sme->ssid_len,
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 1, 0))
-							IEEE80211_BSS_TYPE_ANY,
+								 IEEE80211_BSS_TYPE_ANY,
 #else
-							capability,
+								 capability,
 #endif
-							capability);
-		if (!ndev_vif->sta.sta_bss) {
-			SLSI_NET_ERR(dev, "cfg80211_get_bss(%.*s, %pM) Not found\n", (int)sme->ssid_len, sme->ssid, sme->bssid);
-			/*Set previous status in case of failure */
-			ndev_vif->vif_type = prev_vif_type;
-			r = -ENOENT;
-			goto exit;
+								 capability);
+			if (!ndev_vif->sta.sta_bss) {
+				SLSI_NET_ERR(dev, "cfg80211_get_bss(%.*s, %pM) Not found\n", (int)sme->ssid_len, sme->ssid, sme->bssid);
+				/*Set previous status in case of failure */
+				ndev_vif->vif_type = prev_vif_type;
+				r = -ENOENT;
+				goto exit;
+			}
+			channel = ndev_vif->sta.sta_bss->channel;
+			bssid = ndev_vif->sta.sta_bss->bssid;
 		}
-		channel = ndev_vif->sta.sta_bss->channel;
-		bssid = ndev_vif->sta.sta_bss->bssid;
 	} else {
 		channel = ndev_vif->sta.sta_bss->channel;
 		bssid = ndev_vif->sta.sta_bss->bssid;
@@ -1054,6 +1069,9 @@ int slsi_connect(struct wiphy *wiphy, struct net_device *dev,
 
 	ndev_vif->channel_type = NL80211_CHAN_NO_HT;
 	ndev_vif->chan = channel;
+	ndev_vif->sta.ssid_len = sme->ssid_len;
+	memcpy(ndev_vif->sta.ssid, sme->ssid, sme->ssid_len);
+	SLSI_ETHER_COPY(ndev_vif->sta.bssid, sme->bssid);
 
 	if (slsi_mlme_add_vif(sdev, dev, dev->dev_addr, device_address) != 0) {
 		SLSI_NET_ERR(dev, "slsi_mlme_add_vif failed\n");

@@ -280,3 +280,9 @@ config SCSC_WLAN_MAX_LINK_SPEED
         default n
         ---help---
         This option tells if max linkspeed calculation is enabled or not.
+
+config SCSC_WLAN_ARP_FLOW_CONTROL
+        bool "Enable ARP flow control between Host and FW"
+        default y
+        ---help---
+        This option tells if ARP flow control between Host and FW is enabled or not.

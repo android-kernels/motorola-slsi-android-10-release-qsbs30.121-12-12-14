@@ -15,6 +15,11 @@
 #include "scsc_wlbtd.h"
 #endif
 
+#if defined(CONFIG_S3C2410_WATCHDOG) && defined(CONFIG_DEBUG_SNAPSHOT)
+#include <linux/uaccess.h>
+#include <soc/samsung/exynos-debug.h>
+#endif
+
 #ifndef AID_MXPROC
 #define AID_MXPROC 0
 #endif
@@ -170,15 +175,34 @@ static ssize_t mx_procfs_mx_panic_read(struct file *file, char __user *user_buf,
 
 static ssize_t mx_procfs_mx_panic_write(struct file *file, const char __user *user_buf, size_t count, loff_t *ppos)
 {
+#if defined(CONFIG_S3C2410_WATCHDOG) && defined(CONFIG_DEBUG_SNAPSHOT)
+	char value = 0;
+#endif
 	struct mxproc *mxproc = file->private_data;
 
 	OS_UNUSED_PARAMETER(file);
+#if !(defined(CONFIG_S3C2410_WATCHDOG) && defined(CONFIG_DEBUG_SNAPSHOT))
 	OS_UNUSED_PARAMETER(user_buf);
+#endif
 	OS_UNUSED_PARAMETER(count);
 	OS_UNUSED_PARAMETER(ppos);
 
+#if defined(CONFIG_S3C2410_WATCHDOG) && defined(CONFIG_DEBUG_SNAPSHOT)
+	if (count != 2)
+		return -EFAULT;
+	if (copy_from_user(&value, user_buf, 1))
+		return -EFAULT;
+	if (value == '3') {
+		SCSC_TAG_INFO(MX_PROC, "Manual Scandump");
+		s3c2410wdt_set_emergency_reset(0, 0);
+	} else if (mxproc) {
+		SCSC_TAG_INFO(MX_PROC, "Manual FW Panic");
+		mxman_force_panic(mxproc->mxman);
+	}
+#else
 	if (mxproc)
 		mxman_force_panic(mxproc->mxman);
+#endif
 	SCSC_TAG_INFO(MX_PROC, "OK\n");
 
 	return count;

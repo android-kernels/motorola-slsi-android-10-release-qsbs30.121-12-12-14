@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- * Copyright (c) 2012 - 2019 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2012 - 2020 Samsung Electronics Co., Ltd. All rights reserved
  *
  ****************************************************************************/
 
@@ -114,7 +114,7 @@ extern struct ieee80211_sta_vht_cap       slsi_vht_cap;
 		int var1 = recv_type; \
 		int var2 = exp_type; \
 		if (var1 != var2) { \
-			SLSI_WARN(sdev, "Type mismatched, expected type: %d and received type %d ", var2, var1); \
+			SLSI_WARN(sdev, "Type mismatch, expected:%d received:%d\n", var2, var1); \
 		} \
 	} while (0)
 

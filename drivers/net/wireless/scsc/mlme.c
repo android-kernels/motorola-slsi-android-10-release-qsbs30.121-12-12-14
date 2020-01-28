@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2012 - 2019 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2012 - 2020 Samsung Electronics Co., Ltd. All rights reserved
  *
  ****************************************************************************/
 
@@ -805,7 +805,16 @@ int slsi_mlme_add_vif(struct slsi_dev *sdev, struct net_device *dev, u8 *interfa
 
 	/* By default firmware vif will be in active mode */
 	ndev_vif->power_mode = FAPI_POWERMANAGEMENTMODE_ACTIVE_MODE;
-
+#ifdef CONFIG_SCSC_WLAN_ARP_FLOW_CONTROL
+	/* netdev arp_tx_count is expected to be 0. If its not 0, there is some
+	 * error. Do not reset/decrement sdev arp_tx_count
+	 */
+	if (atomic_read(&ndev_vif->arp_tx_count))
+		SLSI_WARN(sdev,
+			  "ndev_vif->arp_tx_count:%d expected:0 | sdev:%d\n",
+			  ndev_vif->arp_tx_count, sdev->arp_tx_count);
+	atomic_set(&ndev_vif->arp_tx_count, 0);
+#endif
 	slsi_kfree_skb(cfm);
 	return r;
 }
@@ -815,6 +824,9 @@ void slsi_mlme_del_vif(struct slsi_dev *sdev, struct net_device *dev)
 	struct netdev_vif *ndev_vif = netdev_priv(dev);
 	struct sk_buff    *req;
 	struct sk_buff    *cfm;
+#ifdef CONFIG_SCSC_WLAN_ARP_FLOW_CONTROL
+	u32 arp_tx_count;
+#endif
 
 	if (slsi_is_test_mode_enabled()) {
 		SLSI_NET_INFO(dev, "Skip sending signal, WlanLite FW does not support MLME_DEL_VIF.request\n");
@@ -846,6 +858,16 @@ void slsi_mlme_del_vif(struct slsi_dev *sdev, struct net_device *dev)
 	if (SLSI_IS_VIF_INDEX_P2P(ndev_vif))
 		ndev_vif->drv_in_p2p_procedure = false;
 
+#ifdef CONFIG_SCSC_WLAN_ARP_FLOW_CONTROL
+	/* cleanup outstanding arp count for this vif*/
+	arp_tx_count = atomic_read(&ndev_vif->arp_tx_count);
+	if (arp_tx_count) {
+		atomic_sub(arp_tx_count, &sdev->arp_tx_count);
+		atomic_set(&ndev_vif->arp_tx_count, 0);
+		if (atomic_read(&sdev->ctrl_pause_state))
+			scsc_wifi_unpause_ctrl_q_all_vif(sdev);
+	}
+#endif
 	slsi_kfree_skb(cfm);
 }
 
@@ -1829,6 +1851,7 @@ int slsi_mlme_start(struct slsi_dev *sdev, struct net_device *dev, u8 *bssid, st
 	u16                    fw_freq;
 	u16                    vht_ies_len = 0;
 	u8                     ext_capab_len = 0;
+	u32                    channel_encode = 0;
 	const u8			     *recv_vht_capab_ie, *recv_vht_operation_ie;
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 9))
@@ -1902,6 +1925,8 @@ int slsi_mlme_start(struct slsi_dev *sdev, struct net_device *dev, u8 *bssid, st
 	fapi_set_u16(req, u.mlme_start_req.capability_information, le16_to_cpu(mgmt->u.beacon.capab_info));
 	fapi_set_u16(req, u.mlme_start_req.authentication_type, auth_type);
 	fapi_set_u16(req, u.mlme_start_req.hidden_ssid, settings->hidden_ssid < 3 ? settings->hidden_ssid : NL80211_HIDDEN_SSID_ZERO_LEN);
+	channel_encode = ndev_vif->acs == true ? 0 : 1;
+	fapi_set_u32(req, u.mlme_start_req.spare_1, channel_encode);
 
 	fw_freq = ndev_vif->chan->center_freq;
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 9))
@@ -3123,12 +3148,14 @@ int slsi_mlme_send_frame_data(struct slsi_dev *sdev, struct net_device *dev, str
 	    free_slots = hip4_free_ctrl_slots_count(&sdev->hip4_inst);
 
 		if (free_slots < 0) {
-			SLSI_DBG1(sdev, SLSI_MLME, "drop ARP (error in getting free slot count)\n");
+			SLSI_DBG1(sdev, SLSI_MLME,
+				  "drop ARP (free slot count error)\n");
 			return free_slots;
 		}
 
 		if (free_slots < SLSI_MLME_ARP_DROP_FREE_SLOTS_COUNT) {
-			SLSI_DBG1(sdev, SLSI_MLME, "drop ARP (running out of Control slots:%d)\n", free_slots);
+			SLSI_DBG1(sdev, SLSI_MLME,
+				  "drop ARP (No ARP Control slots:%d)\n", free_slots);
 			slsi_kfree_skb(skb);
 			return NETDEV_TX_OK;
 		}
@@ -3170,7 +3197,10 @@ int slsi_mlme_send_frame_data(struct slsi_dev *sdev, struct net_device *dev, str
 
 	if (host_tag == 0)
 		host_tag = slsi_tx_mgmt_host_tag(sdev);
-
+#ifdef CONFIG_SCSC_WLAN_ARP_FLOW_CONTROL
+	if (msg_type == FAPI_MESSAGETYPE_ARP && sdev->fw_max_arp_count)
+		host_tag |= SLSI_HOST_TAG_ARP_MASK;
+#endif
 	fapi_set_u16(skb, u.mlme_send_frame_req.host_tag, host_tag);
 	fapi_set_u16(skb, u.mlme_send_frame_req.data_unit_descriptor, FAPI_DATAUNITDESCRIPTOR_IEEE802_3_FRAME);
 	fapi_set_u16(skb, u.mlme_send_frame_req.message_type, msg_type);
@@ -3178,14 +3208,22 @@ int slsi_mlme_send_frame_data(struct slsi_dev *sdev, struct net_device *dev, str
 	fapi_set_u32(skb, u.mlme_send_frame_req.dwell_time, dwell_time);
 	fapi_set_u32(skb, u.mlme_send_frame_req.period, period);
 
-	SLSI_DBG2(sdev, SLSI_MLME, "mlme_send_frame_req(vif:%d, message_type:%d, host_tag:%d)\n", ndev_vif->ifnum, msg_type, host_tag);
+	SLSI_DBG2(sdev, SLSI_MLME, "vif:%d, message_type:%d, host_tag:0x%x\n", ndev_vif->ifnum, msg_type, host_tag);
 	/* slsi_tx_control frees the skb. Do not use it after this call. */
 	ret = slsi_tx_control(sdev, dev, skb);
 	if (ret != 0) {
 		SLSI_WARN(sdev, "failed to send MLME signal(err=%d)\n", ret);
 		return ret;
 	}
-
+#ifdef CONFIG_SCSC_WLAN_ARP_FLOW_CONTROL
+	if (host_tag & SLSI_HOST_TAG_ARP_MASK) {
+		atomic_inc(&sdev->arp_tx_count);
+		atomic_inc(&ndev_vif->arp_tx_count);
+		/* Stop all the netif queues, if max arp threshold reached */
+		if (atomic_read(&sdev->arp_tx_count) == sdev->fw_max_arp_count)
+			scsc_wifi_pause_ctrl_q_all_vif(sdev);
+	}
+#endif
 #ifdef CONFIG_SCSC_WLAN_STA_ENHANCED_ARP_DETECT
 	if (is_enhanced_arp_request_frame) {
 		int i;
@@ -3911,6 +3949,11 @@ int slsi_mlme_del_range_req(struct slsi_dev *sdev, struct net_device *dev, u16 c
 		SLSI_ERR(sdev, "failed to alloc %zd\n", alloc_data_size);
 		return -ENOMEM;
 	}
+	if (rtt_id >= ARRAY_SIZE(sdev->rtt_vif)) {
+		SLSI_ERR(sdev, "rtt_id is too large\n");
+		slsi_kfree_skb(req);
+		return -EINVAL;
+	}
 	/*fill the data */
 	fapi_set_u16(req, u.mlme_del_range_req.vif, rtt_vif_idx[rtt_id]);
 	fapi_set_u16(req, u.mlme_del_range_req.rtt_id, rtt_id);
@@ -3941,7 +3984,9 @@ int slsi_mlme_set_pno_list(struct slsi_dev *sdev, int count,
 	u32            i, j;
 	u8             fapi_ie_generic[] = { 0xdd, 0, 0x00, 0x16, 0x32, 0x01, 0x00 };
 	u8             *buff_ptr, *ie_start_pos;
+	size_t str_len = 0;
 
+	str_len = strnlen(epno_hs2_param->realm, ARRAY_SIZE(epno_hs2_param->realm));
 	if (count) {
 		/* calculate data size */
 		if (epno_param) {
@@ -3954,8 +3999,8 @@ int slsi_mlme_set_pno_list(struct slsi_dev *sdev, int count,
 				 * + Roaming_Consortium_Count(1) + Roaming Consortium data(16 * 8) +
 				 * PLMN length(1) + PLMN data(6)
 				 */
-				if (strlen(epno_hs2_param->realm))
-					alloc_data_size += sizeof(fapi_ie_generic) + 1 + 1 + (strlen(epno_hs2_param->realm) + 1)
+				if (str_len)
+					alloc_data_size += sizeof(fapi_ie_generic) + 1 + 1 + (str_len + 1)
 							   + 1 + 16 * 8 + 1 + 6;
 				else
 					alloc_data_size += sizeof(fapi_ie_generic) + 1 + 1 + 0

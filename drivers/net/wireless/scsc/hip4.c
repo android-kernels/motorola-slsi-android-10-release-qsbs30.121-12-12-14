@@ -1287,7 +1287,7 @@ consume_ctl_mbulk:
 			/* Set the number of retries */
 			retry = FB_NO_SPC_NUM_RET;
 			/* return to the firmware */
-			while (hip4_q_add_signal(hip, HIP4_MIF_Q_TH_RFB, ref, service) && retry > 0) {
+			while (hip4_q_add_signal(hip, HIP4_MIF_Q_TH_RFB, ref, service) && (!atomic_read(&hip->hip_priv->closing)) && (retry > 0)) {
 				SLSI_WARN_NODEV("Ctrl: Not enough space in FB, retry: %d/%d\n", retry, FB_NO_SPC_NUM_RET);
 				spin_unlock_bh(&hip_priv->rx_lock);
 				msleep(FB_NO_SPC_SLEEP_MS);
@@ -1380,9 +1380,9 @@ static int hip4_napi_poll(struct napi_struct *napi, int budget)
 
 	hip = hip_priv->hip;
 	if(!hip || !hip->hip_priv) {
-                SLSI_ERR_NODEV("either hip or hip->hip_priv is Null\n");
-                spin_unlock_bh(&in_napi_context);
-                return 0;
+		SLSI_ERR_NODEV("either hip or hip->hip_priv is Null\n");
+		spin_unlock_bh(&in_napi_context);
+		return 0;
 	}
 
 	ctrl = hip->hip_control;
@@ -1490,7 +1490,7 @@ consume_dat_mbulk:
 		while ((ref = to_free[i++])) {
 			/* Set the number of retries */
 			retry = FB_NO_SPC_NUM_RET;
-			while (hip4_q_add_signal(hip, HIP4_MIF_Q_TH_RFB, ref, service) && retry > 0) {
+			while (hip4_q_add_signal(hip, HIP4_MIF_Q_TH_RFB, ref, service) && (!atomic_read(&hip->hip_priv->closing)) && (retry > 0)) {
 				SLSI_WARN_NODEV("Dat: Not enough space in FB, retry: %d/%d\n", retry, FB_NO_SPC_NUM_RET);
 				udelay(FB_NO_SPC_DELAY_US);
 				retry--;
@@ -2794,6 +2794,7 @@ void hip4_freeze(struct slsi_hip4 *hip)
 			if (hip->hip_priv->intr_tohost_mul[i] != MIF_NO_IRQ)
 				scsc_service_mifintrbit_bit_mask(service, hip->hip_priv->intr_tohost_mul[i]);
 
+		napi_disable(&hip->hip_priv->napi);
 		tasklet_kill(&hip->hip_priv->intr_tasklet);
 		cancel_work_sync(&hip->hip_priv->intr_wq_ctrl);
 		cancel_work_sync(&hip->hip_priv->intr_wq_fb);

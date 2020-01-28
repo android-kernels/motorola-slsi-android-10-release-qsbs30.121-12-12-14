@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- * Copyright (c) 2014 - 2019 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2014 - 2020 Samsung Electronics Co., Ltd. All rights reserved
  *
  ****************************************************************************/
 #include <linux/types.h>
@@ -76,8 +76,18 @@ static int sap_mlme_notifier(struct slsi_dev *sdev, unsigned long event)
 				if (level < SLSI_WIFI_CM_IF_SYSTEM_ERROR_PANIC && vif_type_ap)
 					ndev_vif->vif_type = FAPI_VIFTYPE_AP;
 #endif
+#ifdef CONFIG_SCSC_WLAN_ARP_FLOW_CONTROL
+				if (atomic_read(&ndev_vif->arp_tx_count) && atomic_read(&sdev->ctrl_pause_state))
+					scsc_wifi_unpause_ctrl_q_all_vif(sdev);
+				atomic_set(&ndev_vif->arp_tx_count, 0);
+#endif
 				SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 			}
+#ifdef CONFIG_SCSC_WLAN_ARP_FLOW_CONTROL
+			if (atomic_read(&sdev->arp_tx_count) && atomic_read(&sdev->ctrl_pause_state))
+				scsc_wifi_unpause_ctrl_q_all_vif(sdev);
+			atomic_set(&sdev->arp_tx_count, 0);
+#endif
 #ifdef CONFIG_SCSC_WLAN_SILENT_RECOVERY
 			if (level < SLSI_WIFI_CM_IF_SYSTEM_ERROR_PANIC)
 				sdev->device_state = SLSI_DEVICE_STATE_STOPPING;

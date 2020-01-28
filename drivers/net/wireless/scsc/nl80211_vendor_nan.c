@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2014 - 2019 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2014 - 2020 Samsung Electronics Co., Ltd. All rights reserved
  *
  ****************************************************************************/
 
@@ -185,11 +185,11 @@ void slsi_nan_ndp_del_entry(struct slsi_dev *sdev, struct net_device *dev, u32 n
 						       SLSI_NAN_DATA_IFINDEX_START);
 		if (data_dev) {
 			ndev_data_vif = netdev_priv(data_dev);
-			if (!ndl_vif_locked) {
+
+			if (!ndl_vif_locked)
 				SLSI_MUTEX_LOCK(ndev_data_vif->vif_mutex);
-			} else {
+			else
 				WARN_ON(!SLSI_MUTEX_IS_LOCKED(ndev_data_vif->vif_mutex));
-			}
 			ndev_data_vif->activated = false;
 			if (!ndl_vif_locked)
 				SLSI_MUTEX_UNLOCK(ndev_data_vif->vif_mutex);
@@ -228,14 +228,14 @@ void slsi_nan_get_mac(struct slsi_dev *sdev, char *nan_mac_addr)
 }
 
 static void slsi_vendor_nan_command_reply(struct wiphy *wiphy, u32 status, u32 error, u32 response_type,
-					  u16 id, struct slsi_hal_nan_capabilities *capabilities, u16 req_id)
+					  u16 id, struct slsi_hal_nan_capabilities *capabilities, u16 req_id, struct netdev_vif *ndev_vif)
 {
 	int reply_len;
 	struct sk_buff  *reply;
 
 	reply_len = SLSI_NL_VENDOR_REPLY_OVERHEAD + SLSI_NL_ATTRIBUTE_U32_LEN *
 		    (3 + sizeof(struct slsi_hal_nan_capabilities));
-	reply = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, reply_len);
+	reply = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, NLMSG_DEFAULT_SIZE);
 	if (!reply) {
 		SLSI_WARN_NODEV("SKB alloc failed for vendor_cmd reply\n");
 		return;
@@ -245,7 +245,8 @@ static void slsi_vendor_nan_command_reply(struct wiphy *wiphy, u32 status, u32 e
 	nla_put_u32(reply, NAN_REPLY_ATTR_VALUE, error);
 	nla_put_u32(reply, NAN_REPLY_ATTR_RESPONSE_TYPE, response_type);
 	nla_put_u16(reply, NAN_REPLY_ATTR_HAL_TRANSACTION_ID, req_id);
-
+	if (response_type == NAN_RESPONSE_ENABLED)
+		nla_put(reply, NAN_EVT_ATTR_DISCOVERY_ENGINE_MAC_ADDR, ETH_ALEN, ndev_vif->nan.local_nmi);
 	if (capabilities) {
 		nla_put_u32(reply, NAN_REPLY_ATTR_CAP_MAX_CONCURRENT_CLUSTER,
 			    capabilities->max_concurrent_nan_clusters);
@@ -284,23 +285,38 @@ static int slsi_nan_get_sdea_params_nl(struct slsi_dev *sdev, struct slsi_nan_sd
 {
 	switch (nl_attr_id) {
 	case NAN_REQ_ATTR_SDEA_PARAM_NDP_TYPE:
-		sdea_params->ndp_type = nla_get_u8(iter);
+		if (slsi_util_nla_get_u8(iter, &sdea_params->ndp_type)) {
+			SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", nl_attr_id);
+			return -EINVAL;
+		}
 		sdea_params->config_nan_data_path = 1;
 		break;
 	case NAN_REQ_ATTR_SDEA_PARAM_SECURITY_CFG:
-		sdea_params->security_cfg = nla_get_u8(iter);
+		if (slsi_util_nla_get_u8(iter, &sdea_params->security_cfg)) {
+			SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", nl_attr_id);
+			return -EINVAL;
+		}
 		sdea_params->config_nan_data_path = 1;
 		break;
 	case NAN_REQ_ATTR_SDEA_PARAM_RANGING_STATE:
-		sdea_params->ranging_state = nla_get_u8(iter);
+		if (slsi_util_nla_get_u8(iter, &sdea_params->ranging_state)) {
+			SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", nl_attr_id);
+			return -EINVAL;
+		}
 		sdea_params->config_nan_data_path = 1;
 		break;
 	case NAN_REQ_ATTR_SDEA_PARAM_RANGE_REPORT:
-		sdea_params->range_report = nla_get_u8(iter);
+		if (slsi_util_nla_get_u8(iter, &sdea_params->range_report)) {
+			SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", nl_attr_id);
+			return -EINVAL;
+		}
 		sdea_params->config_nan_data_path = 1;
 		break;
 	case NAN_REQ_ATTR_SDEA_PARAM_QOS_CFG:
-		sdea_params->qos_cfg = nla_get_u8(iter);
+		if (slsi_util_nla_get_u8(iter, &sdea_params->qos_cfg)) {
+			SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", nl_attr_id);
+			return -EINVAL;
+		}
 		sdea_params->config_nan_data_path = 1;
 		break;
 	default:
@@ -314,16 +330,28 @@ static int slsi_nan_get_ranging_cfg_nl(struct slsi_dev *sdev, struct slsi_nan_ra
 {
 	switch (nl_attr_id) {
 	case NAN_REQ_ATTR_RANGING_CFG_INTERVAL:
-		ranging_cfg->ranging_interval_msec = nla_get_u32(iter);
+		if (slsi_util_nla_get_u32(iter, &ranging_cfg->ranging_interval_msec)) {
+			SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", nl_attr_id);
+			return -EINVAL;
+		}
 		break;
 	case NAN_REQ_ATTR_RANGING_CFG_INDICATION:
-		ranging_cfg->config_ranging_indications = nla_get_u32(iter);
+		if (slsi_util_nla_get_u32(iter, &ranging_cfg->config_ranging_indications)) {
+			SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", nl_attr_id);
+			return -EINVAL;
+		}
 		break;
 	case NAN_REQ_ATTR_RANGING_CFG_INGRESS_MM:
-		ranging_cfg->distance_ingress_mm = nla_get_u32(iter);
+		if (slsi_util_nla_get_u32(iter, &ranging_cfg->distance_ingress_mm)) {
+			SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", nl_attr_id);
+			return -EINVAL;
+		}
 		break;
 	case NAN_REQ_ATTR_RANGING_CFG_EGRESS_MM:
-		ranging_cfg->distance_egress_mm = nla_get_u32(iter);
+		if (slsi_util_nla_get_u32(iter, &ranging_cfg->distance_egress_mm)) {
+			SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", nl_attr_id);
+			return -EINVAL;
+		}
 		break;
 	default:
 		return -EINVAL;
@@ -334,33 +362,44 @@ static int slsi_nan_get_ranging_cfg_nl(struct slsi_dev *sdev, struct slsi_nan_ra
 static int slsi_nan_get_security_info_nl(struct slsi_dev *sdev, struct slsi_nan_security_info *sec_info,
 					 const struct nlattr *iter, int nl_attr_id)
 {
+	u32 key_type;
+
 	switch (nl_attr_id) {
 	case NAN_REQ_ATTR_CIPHER_TYPE:
-		sec_info->cipher_type = nla_get_u32(iter);
+		if (slsi_util_nla_get_u32(iter, &sec_info->cipher_type))
+			return -EINVAL;
 		break;
 	case NAN_REQ_ATTR_SECURITY_KEY_TYPE:
-		sec_info->key_info.key_type = nla_get_u8(iter);
+		if (slsi_util_nla_get_u32(iter, &key_type))
+			return -EINVAL;
+		sec_info->key_info.key_type = key_type;
 		break;
 	case NAN_REQ_ATTR_SECURITY_PMK_LEN:
-		sec_info->key_info.body.pmk_info.pmk_len = nla_get_u32(iter);
+		if (slsi_util_nla_get_u32(iter, &sec_info->key_info.body.pmk_info.pmk_len))
+			return -EINVAL;
 		break;
 	case NAN_REQ_ATTR_SECURITY_PMK:
-		memcpy(sec_info->key_info.body.pmk_info.pmk, nla_data(iter), sec_info->key_info.body.pmk_info.pmk_len);
+		if (slsi_util_nla_get_data(iter, sec_info->key_info.body.pmk_info.pmk_len, sec_info->key_info.body.pmk_info.pmk))
+			return -EINVAL;
 		break;
 	case NAN_REQ_ATTR_SECURITY_PASSPHRASE_LEN:
-		sec_info->key_info.body.passphrase_info.passphrase_len = nla_get_u32(iter);
+		if (slsi_util_nla_get_u32(iter, &sec_info->key_info.body.passphrase_info.passphrase_len))
+			return -EINVAL;
 		break;
 	case NAN_REQ_ATTR_SECURITY_PASSPHRASE:
-		memcpy(sec_info->key_info.body.passphrase_info.passphrase, nla_data(iter),
-		       sec_info->key_info.body.passphrase_info.passphrase_len);
+		if (slsi_util_nla_get_data(iter, sec_info->key_info.body.passphrase_info.passphrase_len,
+					   sec_info->key_info.body.passphrase_info.passphrase))
+			return -EINVAL;
 		break;
 	case NAN_REQ_ATTR_SCID_LEN:
-		sec_info->scid_len = nla_get_u32(iter);
+		if (slsi_util_nla_get_u32(iter, &sec_info->scid_len))
+			return -EINVAL;
 		break;
 	case NAN_REQ_ATTR_SCID:
 		if (sec_info->scid_len > sizeof(sec_info->scid))
 			sec_info->scid_len = sizeof(sec_info->scid);
-		memcpy(sec_info->scid, nla_data(iter), sec_info->scid_len);
+		if (slsi_util_nla_get_data(iter, sec_info->scid_len, sec_info->scid))
+			return -EINVAL;
 		break;
 	default:
 		return -EINVAL;
@@ -371,21 +410,28 @@ static int slsi_nan_get_security_info_nl(struct slsi_dev *sdev, struct slsi_nan_
 static int slsi_nan_get_range_resp_cfg_nl(struct slsi_dev *sdev, struct slsi_nan_range_response_cfg *cfg,
 					  const struct nlattr *iter, int nl_attr_id)
 {
+	u16 range_response;
+
 	switch (nl_attr_id) {
 	case NAN_REQ_ATTR_RANGE_RESPONSE_CFG_PUBLISH_ID:
-		cfg->publish_id = nla_get_u16(iter);
+		if (slsi_util_nla_get_u16(iter, &cfg->publish_id))
+			return -EINVAL;
 		break;
 
 	case NAN_REQ_ATTR_RANGE_RESPONSE_CFG_REQUESTOR_ID:
-		cfg->requestor_instance_id = nla_get_u32(iter);
+		if (slsi_util_nla_get_u32(iter, &cfg->requestor_instance_id))
+			return -EINVAL;
 		break;
 
 	case NAN_REQ_ATTR_RANGE_RESPONSE_CFG_PEER_ADDR:
-		memcpy(cfg->peer_addr, nla_data(iter), ETH_ALEN);
+		if (slsi_util_nla_get_data(iter, ETH_ALEN, cfg->peer_addr))
+			return -EINVAL;
 		break;
 
 	case NAN_REQ_ATTR_RANGE_RESPONSE_CFG_RANGING_RESPONSE:
-		cfg->ranging_response = nla_get_u8(iter);
+		if (slsi_util_nla_get_u16(iter, &range_response))
+			return -EINVAL;
+		cfg->ranging_response = range_response;
 		break;
 
 	default:
@@ -401,169 +447,204 @@ static int slsi_nan_enable_get_nl_params(struct slsi_dev *sdev, struct slsi_hal_
 {
 	int type, tmp;
 	const struct nlattr *iter;
+	u8 val = 0;
 
 	memset(hal_req, 0, sizeof(*hal_req));
 	nla_for_each_attr(iter, data, len, tmp) {
 		type = nla_type(iter);
 		switch (type) {
 		case NAN_REQ_ATTR_MASTER_PREF:
-			hal_req->master_pref = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->master_pref))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_CLUSTER_LOW:
-			hal_req->cluster_low = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->cluster_low))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_CLUSTER_HIGH:
-			hal_req->cluster_high = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->cluster_high))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUPPORT_5G_VAL:
-			hal_req->support_5g_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->support_5g_val))
+				return -EINVAL;
 			hal_req->config_support_5g = 1;
 			break;
 
 		case NAN_REQ_ATTR_SID_BEACON_VAL:
-			hal_req->sid_beacon_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->sid_beacon_val))
+				return -EINVAL;
 			hal_req->config_sid_beacon = 1;
 			break;
 
 		case NAN_REQ_ATTR_RSSI_CLOSE_2G4_VAL:
-			hal_req->rssi_close_2dot4g_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->rssi_close_2dot4g_val))
+				return -EINVAL;
 			hal_req->config_2dot4g_rssi_close = 1;
 			break;
 
 		case NAN_REQ_ATTR_RSSI_MIDDLE_2G4_VAL:
-			hal_req->rssi_middle_2dot4g_val =  nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->rssi_middle_2dot4g_val))
+				return -EINVAL;
 			hal_req->config_2dot4g_rssi_middle = 1;
 			break;
 
 		case NAN_REQ_ATTR_RSSI_PROXIMITY_2G4_VAL:
-			hal_req->rssi_proximity_2dot4g_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->rssi_proximity_2dot4g_val))
+				return -EINVAL;
 			hal_req->config_2dot4g_rssi_proximity = 1;
 			break;
 
 		case NAN_REQ_ATTR_HOP_COUNT_LIMIT_VAL:
-			hal_req->hop_count_limit_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->hop_count_limit_val))
+				return -EINVAL;
 			hal_req->config_hop_count_limit = 1;
 			break;
 
 		case NAN_REQ_ATTR_SUPPORT_2G4_VAL:
-			hal_req->support_2dot4g_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->support_2dot4g_val))
+				return -EINVAL;
 			hal_req->config_2dot4g_support = 1;
 			break;
 
 		case NAN_REQ_ATTR_BEACONS_2G4_VAL:
-			hal_req->beacon_2dot4g_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->beacon_2dot4g_val))
+				return -EINVAL;
 			hal_req->config_2dot4g_beacons = 1;
 			break;
 
 		case NAN_REQ_ATTR_SDF_2G4_VAL:
-			hal_req->sdf_2dot4g_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->sdf_2dot4g_val))
+				return -EINVAL;
 			hal_req->config_2dot4g_sdf = 1;
 			break;
 
 		case NAN_REQ_ATTR_BEACON_5G_VAL:
-			hal_req->beacon_5g_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->beacon_5g_val))
+				return -EINVAL;
 			hal_req->config_5g_beacons = 1;
 			break;
 
 		case NAN_REQ_ATTR_SDF_5G_VAL:
-			hal_req->sdf_5g_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->sdf_5g_val))
+				return -EINVAL;
 			hal_req->config_5g_sdf = 1;
 			break;
 
 		case NAN_REQ_ATTR_RSSI_CLOSE_5G_VAL:
-			hal_req->rssi_close_5g_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->rssi_close_5g_val))
+				return -EINVAL;
 			hal_req->config_5g_rssi_close = 1;
 			break;
 
 		case NAN_REQ_ATTR_RSSI_MIDDLE_5G_VAL:
-			hal_req->rssi_middle_5g_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->rssi_middle_5g_val))
+				return -EINVAL;
 			hal_req->config_5g_rssi_middle = 1;
 			break;
 
 		case NAN_REQ_ATTR_RSSI_CLOSE_PROXIMITY_5G_VAL:
-			hal_req->rssi_close_proximity_5g_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->rssi_close_proximity_5g_val))
+				return -EINVAL;
 			hal_req->config_5g_rssi_close_proximity = 1;
 			break;
 
 		case NAN_REQ_ATTR_RSSI_WINDOW_SIZE_VAL:
-			hal_req->rssi_window_size_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->rssi_window_size_val))
+				return -EINVAL;
 			hal_req->config_rssi_window_size = 1;
 			break;
 
 		case NAN_REQ_ATTR_OUI_VAL:
-			hal_req->oui_val = nla_get_u32(iter);
+			if (slsi_util_nla_get_u32(iter, &hal_req->oui_val))
+				return -EINVAL;
 			hal_req->config_oui = 1;
 			break;
 
 		case NAN_REQ_ATTR_MAC_ADDR_VAL:
-			memcpy(hal_req->intf_addr_val, nla_data(iter), ETH_ALEN);
+			if (slsi_util_nla_get_data(iter, ETH_ALEN, hal_req->intf_addr_val))
+				return -EINVAL;
 			hal_req->config_intf_addr = 1;
 			break;
 
 		case NAN_REQ_ATTR_CLUSTER_VAL:
-			hal_req->config_cluster_attribute_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->config_cluster_attribute_val))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SOCIAL_CH_SCAN_DWELL_TIME:
-			memcpy(hal_req->scan_params_val.dwell_time, nla_data(iter),
-			       sizeof(hal_req->scan_params_val.dwell_time));
+			if (slsi_util_nla_get_data(iter, sizeof(hal_req->scan_params_val.dwell_time), hal_req->scan_params_val.dwell_time))
+				return -EINVAL;
 			hal_req->config_scan_params = 1;
 			break;
 
 		case NAN_REQ_ATTR_SOCIAL_CH_SCAN_PERIOD:
-			memcpy(hal_req->scan_params_val.scan_period, nla_data(iter),
-			       sizeof(hal_req->scan_params_val.scan_period));
+			if (slsi_util_nla_get_data(iter, sizeof(hal_req->scan_params_val.scan_period), hal_req->scan_params_val.scan_period))
+				return -EINVAL;
 			hal_req->config_scan_params = 1;
 			break;
 
 		case NAN_REQ_ATTR_RANDOM_FACTOR_FORCE_VAL:
-			hal_req->random_factor_force_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->random_factor_force_val))
+				return -EINVAL;
 			hal_req->config_random_factor_force = 1;
 			break;
 
 		case NAN_REQ_ATTR_HOP_COUNT_FORCE_VAL:
-			hal_req->hop_count_force_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->hop_count_force_val))
+				return -EINVAL;
 			hal_req->config_hop_count_force = 1;
 			break;
 
 		case NAN_REQ_ATTR_CHANNEL_2G4_MHZ_VAL:
-			hal_req->channel_24g_val = nla_get_u32(iter);
+			if (slsi_util_nla_get_u32(iter, &hal_req->channel_24g_val))
+				return -EINVAL;
 			hal_req->config_24g_channel = 1;
 			break;
 
 		case NAN_REQ_ATTR_CHANNEL_5G_MHZ_VAL:
-			hal_req->channel_5g_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &val))
+				return -EINVAL;
+			hal_req->channel_5g_val = (int)val;
 			hal_req->config_5g_channel = 1;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_SID_BEACON_VAL:
-			hal_req->subscribe_sid_beacon_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &val))
+				return -EINVAL;
+			hal_req->subscribe_sid_beacon_val = (u32)val;
 			hal_req->config_subscribe_sid_beacon = 1;
 			break;
 
 		case NAN_REQ_ATTR_DW_2G4_INTERVAL:
-			hal_req->dw_2dot4g_interval_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &val))
+				return -EINVAL;
+			hal_req->dw_2dot4g_interval_val = (u32)val;
 			/* valid range for 2.4G is 1-5 */
 			if (hal_req->dw_2dot4g_interval_val > 0  && hal_req->dw_2dot4g_interval_val < 5)
 				hal_req->config_2dot4g_dw_band = 1;
 			break;
 
 		case NAN_REQ_ATTR_DW_5G_INTERVAL:
-			hal_req->dw_5g_interval_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &val))
+				return -EINVAL;
+			hal_req->dw_5g_interval_val = (u32)val;
 			/* valid range for 5g is 0-5 */
 			if (hal_req->dw_5g_interval_val < 5)
 				hal_req->config_5g_dw_band = 1;
 			break;
 
 		case NAN_REQ_ATTR_DISC_MAC_ADDR_RANDOM_INTERVAL:
-			hal_req->disc_mac_addr_rand_interval_sec = nla_get_u32(iter);
+			if (slsi_util_nla_get_u32(iter, &hal_req->disc_mac_addr_rand_interval_sec))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_HAL_TRANSACTION_ID:
-			hal_req->transaction_id = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->transaction_id))
+				return -EINVAL;
 			break;
 
 		default:
@@ -648,7 +729,7 @@ int slsi_nan_enable(struct wiphy *wiphy, struct wireless_dev *wdev, const void *
 exit_with_mutex:
 	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 exit:
-	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_RESPONSE_ENABLED, 0, NULL, hal_req.transaction_id);
+	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_RESPONSE_ENABLED, 0, NULL, hal_req.transaction_id, ndev_vif);
 	return ret;
 }
 
@@ -667,7 +748,8 @@ int slsi_nan_disable(struct wiphy *wiphy, struct wireless_dev *wdev, const void 
 		type = nla_type(iter);
 		switch (type) {
 		case NAN_REQ_ATTR_HAL_TRANSACTION_ID:
-			transaction_id = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &transaction_id))
+				return -EINVAL;
 			break;
 		default:
 			break;
@@ -682,7 +764,7 @@ int slsi_nan_disable(struct wiphy *wiphy, struct wireless_dev *wdev, const void 
 			slsi_mlme_del_vif(sdev, dev);
 			ndev_vif->activated = false;
 		} else {
-			SLSI_WARN(sdev, "NAN FWif not active!!");
+			SLSI_DBG3(sdev, SLSI_GSCAN, "NAN FWif not active!!\n");
 		}
 		for (i = SLSI_NAN_DATA_IFINDEX_START; i < CONFIG_SCSC_WLAN_MAX_INTERFACES + 1; i++) {
 			data_dev = slsi_get_netdev(sdev, i);
@@ -701,7 +783,7 @@ int slsi_nan_disable(struct wiphy *wiphy, struct wireless_dev *wdev, const void 
 		SLSI_WARN(sdev, "No NAN interface!!");
 	}
 
-	slsi_vendor_nan_command_reply(wiphy, SLSI_HAL_NAN_STATUS_SUCCESS, 0, NAN_RESPONSE_DISABLED, 0, NULL, transaction_id);
+	slsi_vendor_nan_command_reply(wiphy, SLSI_HAL_NAN_STATUS_SUCCESS, 0, NAN_RESPONSE_DISABLED, 0, NULL, transaction_id, ndev_vif);
 
 	return 0;
 }
@@ -717,91 +799,156 @@ static int slsi_nan_publish_get_nl_params(struct slsi_dev *sdev, struct slsi_hal
 		type = nla_type(iter);
 		switch (type) {
 		case NAN_REQ_ATTR_PUBLISH_ID:
-			hal_req->publish_id = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->publish_id)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 		case NAN_REQ_ATTR_PUBLISH_TTL:
-			hal_req->ttl = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->ttl)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_PERIOD:
-			hal_req->period = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->period)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_TYPE:
-			hal_req->publish_type = nla_get_u16(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->publish_type)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_TX_TYPE:
-			hal_req->tx_type = nla_get_u16(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->tx_type)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_COUNT:
-			hal_req->publish_count = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->publish_count)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_SERVICE_NAME_LEN:
-			hal_req->service_name_len = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->service_name_len)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_SERVICE_NAME:
-			memcpy(hal_req->service_name, nla_data(iter), hal_req->service_name_len);
+			if (slsi_util_nla_get_data(iter, hal_req->service_name_len, hal_req->service_name)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_MATCH_ALGO:
-			hal_req->publish_match_indicator = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->publish_match_indicator)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_SERVICE_INFO_LEN:
-			hal_req->service_specific_info_len = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->service_specific_info_len)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_SERVICE_INFO:
-			memcpy(hal_req->service_specific_info, nla_data(iter), hal_req->service_specific_info_len);
+			if (slsi_util_nla_get_data(iter, hal_req->service_specific_info_len, hal_req->service_specific_info)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_RX_MATCH_FILTER_LEN:
-			hal_req->rx_match_filter_len = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->rx_match_filter_len)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_RX_MATCH_FILTER:
-			memcpy(hal_req->rx_match_filter, nla_data(iter), hal_req->rx_match_filter_len);
+			if (slsi_util_nla_get_data(iter,  hal_req->rx_match_filter_len, hal_req->rx_match_filter)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_TX_MATCH_FILTER_LEN:
-			hal_req->tx_match_filter_len = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->tx_match_filter_len)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_TX_MATCH_FILTER:
-			memcpy(hal_req->tx_match_filter, nla_data(iter), hal_req->tx_match_filter_len);
+			if (slsi_util_nla_get_data(iter, hal_req->tx_match_filter_len, hal_req->tx_match_filter)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_RSSI_THRESHOLD_FLAG:
-			hal_req->rssi_threshold_flag = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->rssi_threshold_flag)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_CONN_MAP:
-			hal_req->connmap = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->connmap)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_RECV_IND_CFG:
-			hal_req->recv_indication_cfg = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->recv_indication_cfg)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_SDEA_LEN:
-			hal_req->sdea_service_specific_info_len = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->sdea_service_specific_info_len)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_SDEA:
-			memcpy(hal_req->sdea_service_specific_info, nla_data(iter),
-			       hal_req->sdea_service_specific_info_len);
+			if (slsi_util_nla_get_data(iter, hal_req->sdea_service_specific_info_len, hal_req->sdea_service_specific_info)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_RANGING_AUTO_RESPONSE:
-			hal_req->ranging_auto_response = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->ranging_auto_response)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		case NAN_REQ_ATTR_HAL_TRANSACTION_ID:
-			hal_req->transaction_id = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->transaction_id)) {
+				SLSI_ERR(sdev, "Returning EINVAL TYPE:%d\n", type);
+				return -EINVAL;
+			}
 			break;
 
 		default:
@@ -893,7 +1040,7 @@ exit_with_lock:
 	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 	kfree(hal_req);
 exit:
-	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_RESPONSE_PUBLISH, publish_id, NULL, transaction_id);
+	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_RESPONSE_PUBLISH, publish_id, NULL, transaction_id, ndev_vif);
 	return ret;
 }
 
@@ -917,10 +1064,12 @@ int slsi_nan_publish_cancel(struct wiphy *wiphy, struct wireless_dev *wdev,
 		type = nla_type(iter);
 		switch (type) {
 		case NAN_REQ_ATTR_PUBLISH_ID:
-			publish_id = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &(publish_id)))
+				return -EINVAL;
 			break;
 		case NAN_REQ_ATTR_HAL_TRANSACTION_ID:
-			transaction_id = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &(transaction_id)))
+				return -EINVAL;
 			break;
 
 		default:
@@ -946,7 +1095,7 @@ int slsi_nan_publish_cancel(struct wiphy *wiphy, struct wireless_dev *wdev,
 exit_with_lock:
 	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 exit:
-	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_RESPONSE_PUBLISH_CANCEL, publish_id, NULL, transaction_id);
+	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_RESPONSE_PUBLISH_CANCEL, publish_id, NULL, transaction_id, ndev_vif);
 	return ret;
 }
 
@@ -961,112 +1110,139 @@ static int slsi_nan_subscribe_get_nl_params(struct slsi_dev *sdev, struct slsi_h
 		type = nla_type(iter);
 		switch (type) {
 		case NAN_REQ_ATTR_SUBSCRIBE_ID:
-			hal_req->subscribe_id = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->subscribe_id))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_TTL:
-			hal_req->ttl = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->ttl))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_PERIOD:
-			hal_req->period = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->period))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_TYPE:
-			hal_req->subscribe_type = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->subscribe_type))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_RESP_FILTER_TYPE:
-			hal_req->service_response_filter = nla_get_u16(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->service_response_filter))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_RESP_INCLUDE:
-			hal_req->service_response_include = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->service_response_include))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_USE_RESP_FILTER:
-			hal_req->use_service_response_filter = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->use_service_response_filter))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_SSI_REQUIRED:
-			hal_req->ssi_required_for_match_indication = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->ssi_required_for_match_indication))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_MATCH_INDICATOR:
-			hal_req->subscribe_match_indicator = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->subscribe_match_indicator))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_COUNT:
-			hal_req->subscribe_count = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->subscribe_count))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_SERVICE_NAME_LEN:
-			hal_req->service_name_len = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->service_name_len))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_SERVICE_NAME:
-			memcpy(hal_req->service_name, nla_data(iter), hal_req->service_name_len);
+			if (slsi_util_nla_get_data(iter, hal_req->service_name_len, hal_req->service_name))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_SERVICE_INFO_LEN:
-			hal_req->service_specific_info_len = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->service_specific_info_len))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_SERVICE_INFO:
-			memcpy(hal_req->service_specific_info, nla_data(iter), hal_req->service_specific_info_len);
+			if (slsi_util_nla_get_data(iter, hal_req->service_specific_info_len, hal_req->service_specific_info))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_RX_MATCH_FILTER_LEN:
-			hal_req->rx_match_filter_len = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->rx_match_filter_len))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_RX_MATCH_FILTER:
-			memcpy(hal_req->rx_match_filter, nla_data(iter), hal_req->rx_match_filter_len);
+			if (slsi_util_nla_get_data(iter, hal_req->rx_match_filter_len, hal_req->rx_match_filter))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_TX_MATCH_FILTER_LEN:
-			hal_req->tx_match_filter_len = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->tx_match_filter_len))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_TX_MATCH_FILTER:
-			memcpy(hal_req->tx_match_filter, nla_data(iter), hal_req->tx_match_filter_len);
+			if (slsi_util_nla_get_data(iter, hal_req->tx_match_filter_len, hal_req->tx_match_filter))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_RSSI_THRESHOLD_FLAG:
-			hal_req->rssi_threshold_flag = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->rssi_threshold_flag))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_CONN_MAP:
-			hal_req->connmap = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->connmap))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_NUM_INTF_ADDR_PRESENT:
-			hal_req->num_intf_addr_present = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->num_intf_addr_present))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_INTF_ADDR:
-			memcpy(hal_req->intf_addr, nla_data(iter), hal_req->num_intf_addr_present * ETH_ALEN);
+			if (slsi_util_nla_get_data(iter, (hal_req->num_intf_addr_present * ETH_ALEN), hal_req->intf_addr))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_RECV_IND_CFG:
-			hal_req->recv_indication_cfg = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->recv_indication_cfg))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_SDEA_LEN:
-			hal_req->sdea_service_specific_info_len = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->sdea_service_specific_info_len))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_SDEA:
-			memcpy(hal_req->sdea_service_specific_info, nla_data(iter),
-			       hal_req->sdea_service_specific_info_len);
+			if (slsi_util_nla_get_data(iter, hal_req->sdea_service_specific_info_len,
+						   hal_req->sdea_service_specific_info))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_RANGING_AUTO_RESPONSE:
-			hal_req->ranging_auto_response = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->ranging_auto_response))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_HAL_TRANSACTION_ID:
-			hal_req->transaction_id = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->transaction_id))
+				return -EINVAL;
 			break;
 
 		default:
@@ -1148,7 +1324,7 @@ exit_with_lock:
 	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 	kfree(hal_req);
 exit:
-	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_RESPONSE_SUBSCRIBE, subscribe_id, NULL, transaction_id);
+	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_RESPONSE_SUBSCRIBE, subscribe_id, NULL, transaction_id, ndev_vif);
 	return ret;
 }
 
@@ -1172,10 +1348,16 @@ int slsi_nan_subscribe_cancel(struct wiphy *wiphy, struct wireless_dev *wdev, co
 		type = nla_type(iter);
 		switch (type) {
 		case NAN_REQ_ATTR_SUBSCRIBE_ID:
-			subscribe_id = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &(subscribe_id))) {
+				reply_status = SLSI_HAL_NAN_STATUS_INVALID_PARAM;
+				goto exit;
+			}
 			break;
 		case NAN_REQ_ATTR_HAL_TRANSACTION_ID:
-			transaction_id = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &(transaction_id))) {
+				reply_status = SLSI_HAL_NAN_STATUS_INVALID_PARAM;
+				goto exit;
+			}
 			break;
 		default:
 			SLSI_ERR(sdev, "Unexpected NAN subscribecancel attribute TYPE:%d\n", type);
@@ -1202,7 +1384,7 @@ int slsi_nan_subscribe_cancel(struct wiphy *wiphy, struct wireless_dev *wdev, co
 	}
 	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 exit:
-	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_RESPONSE_SUBSCRIBE_CANCEL, subscribe_id, NULL, transaction_id);
+	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_RESPONSE_SUBSCRIBE_CANCEL, subscribe_id, NULL, transaction_id, ndev_vif);
 	return ret;
 }
 
@@ -1211,54 +1393,67 @@ static int slsi_nan_followup_get_nl_params(struct slsi_dev *sdev, struct slsi_ha
 {
 	int type, tmp;
 	const struct nlattr *iter;
+	u16 val = 0;
 
 	memset(hal_req, 0, sizeof(*hal_req));
 	nla_for_each_attr(iter, data, len, tmp) {
 		type = nla_type(iter);
 		switch (type) {
 		case NAN_REQ_ATTR_FOLLOWUP_ID:
-			hal_req->publish_subscribe_id = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->publish_subscribe_id))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_FOLLOWUP_REQUESTOR_ID:
-			hal_req->requestor_instance_id = nla_get_u32(iter);
+			if (slsi_util_nla_get_u16(iter, &val))
+				return -EINVAL;
+			hal_req->requestor_instance_id = (u32)val;
 			break;
 
 		case NAN_REQ_ATTR_FOLLOWUP_ADDR:
-			memcpy(hal_req->addr, nla_data(iter), ETH_ALEN);
+			if (slsi_util_nla_get_data(iter, ETH_ALEN, hal_req->addr))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_FOLLOWUP_PRIORITY:
-			hal_req->priority = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->priority))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_FOLLOWUP_TX_WINDOW:
-			hal_req->dw_or_faw = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->dw_or_faw))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_FOLLOWUP_SERVICE_NAME_LEN:
-			hal_req->service_specific_info_len =  nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->service_specific_info_len))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_FOLLOWUP_SERVICE_NAME:
-			memcpy(hal_req->service_specific_info, nla_data(iter), hal_req->service_specific_info_len);
+			if (slsi_util_nla_get_data(iter, hal_req->service_specific_info_len, hal_req->service_specific_info))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_FOLLOWUP_RECV_IND_CFG:
-			hal_req->recv_indication_cfg = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->recv_indication_cfg))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_SDEA_LEN:
-			hal_req->sdea_service_specific_info_len =  nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->sdea_service_specific_info_len))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_PUBLISH_SDEA:
-			memcpy(hal_req->sdea_service_specific_info, nla_data(iter),
-			       hal_req->sdea_service_specific_info_len);
+			if (slsi_util_nla_get_data(iter, hal_req->sdea_service_specific_info_len,
+						   hal_req->sdea_service_specific_info))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_HAL_TRANSACTION_ID:
-			hal_req->transaction_id = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->transaction_id))
+				return -EINVAL;
 			break;
 
 		default:
@@ -1329,7 +1524,7 @@ int slsi_nan_transmit_followup(struct wiphy *wiphy, struct wireless_dev *wdev, c
 exit_with_lock:
 	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 exit:
-	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_RESPONSE_TRANSMIT_FOLLOWUP, 0, NULL, hal_req.transaction_id);
+	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_RESPONSE_TRANSMIT_FOLLOWUP, 0, NULL, hal_req.transaction_id, ndev_vif);
 	return ret;
 }
 
@@ -1340,98 +1535,118 @@ static int slsi_nan_config_get_nl_params(struct slsi_dev *sdev, struct slsi_hal_
 	const struct nlattr *iter, *iter1;
 	struct slsi_hal_nan_post_discovery_param *disc_attr;
 	struct slsi_hal_nan_further_availability_channel *famchan;
+	u8 val = 0;
 
 	nla_for_each_attr(iter, data, len, tmp) {
 		type = nla_type(iter);
 		switch (type) {
 		case NAN_REQ_ATTR_SID_BEACON_VAL:
-			hal_req->sid_beacon = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->sid_beacon))
+				return -EINVAL;
 			hal_req->config_sid_beacon = 1;
 			break;
 
 		case NAN_REQ_ATTR_RSSI_PROXIMITY_2G4_VAL:
-			hal_req->rssi_proximity = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->rssi_proximity))
+				return -EINVAL;
 			hal_req->config_rssi_proximity = 1;
 			break;
 
 		case NAN_REQ_ATTR_MASTER_PREF:
-			hal_req->master_pref = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->master_pref))
+				return -EINVAL;
 			hal_req->config_master_pref = 1;
 			break;
 
 		case NAN_REQ_ATTR_RSSI_CLOSE_PROXIMITY_5G_VAL:
-			hal_req->rssi_close_proximity_5g_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->rssi_close_proximity_5g_val))
+				return -EINVAL;
 			hal_req->config_5g_rssi_close_proximity = 1;
 			break;
 
 		case NAN_REQ_ATTR_RSSI_WINDOW_SIZE_VAL:
-			hal_req->rssi_window_size_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &val))
+				return -EINVAL;
+			hal_req->rssi_window_size_val = (u16)val;
 			hal_req->config_rssi_window_size = 1;
 			break;
 
 		case NAN_REQ_ATTR_CLUSTER_VAL:
-			hal_req->config_cluster_attribute_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->config_cluster_attribute_val))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SOCIAL_CH_SCAN_DWELL_TIME:
-			memcpy(hal_req->scan_params_val.dwell_time, nla_data(iter),
-			       sizeof(hal_req->scan_params_val.dwell_time));
+			if (slsi_util_nla_get_data(iter, sizeof(hal_req->scan_params_val.dwell_time),
+						   hal_req->scan_params_val.dwell_time))
+				return -EINVAL;
 			hal_req->config_scan_params = 1;
 			break;
 
 		case NAN_REQ_ATTR_SOCIAL_CH_SCAN_PERIOD:
-			memcpy(hal_req->scan_params_val.scan_period, nla_data(iter),
-			       sizeof(hal_req->scan_params_val.scan_period));
+			if (slsi_util_nla_get_data(iter, sizeof(hal_req->scan_params_val.scan_period),
+						   hal_req->scan_params_val.scan_period))
+				return -EINVAL;
 			hal_req->config_scan_params = 1;
 			break;
 
 		case NAN_REQ_ATTR_RANDOM_FACTOR_FORCE_VAL:
-			hal_req->random_factor_force_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->random_factor_force_val))
+				return -EINVAL;
 			hal_req->config_random_factor_force = 1;
 			break;
 
 		case NAN_REQ_ATTR_HOP_COUNT_FORCE_VAL:
-			hal_req->hop_count_force_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->hop_count_force_val))
+				return -EINVAL;
 			hal_req->config_hop_count_force = 1;
 			break;
 
 		case NAN_REQ_ATTR_CONN_CAPABILITY_PAYLOAD_TX:
-			hal_req->conn_capability_val.payload_transmit_flag = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->conn_capability_val.payload_transmit_flag))
+				return -EINVAL;
 			hal_req->config_conn_capability = 1;
 			break;
 
 		case NAN_REQ_ATTR_CONN_CAPABILITY_WFD:
-			hal_req->conn_capability_val.is_wfd_supported = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->conn_capability_val.is_wfd_supported))
+				return -EINVAL;
 			hal_req->config_conn_capability = 1;
 			break;
 
 		case NAN_REQ_ATTR_CONN_CAPABILITY_WFDS:
-			hal_req->conn_capability_val.is_wfds_supported = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->conn_capability_val.is_wfds_supported))
+				return -EINVAL;
 			hal_req->config_conn_capability = 1;
 			break;
 
 		case NAN_REQ_ATTR_CONN_CAPABILITY_TDLS:
-			hal_req->conn_capability_val.is_tdls_supported = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->conn_capability_val.is_tdls_supported))
+				return -EINVAL;
 			hal_req->config_conn_capability = 1;
 			break;
 
 		case NAN_REQ_ATTR_CONN_CAPABILITY_MESH:
-			hal_req->conn_capability_val.is_mesh_supported = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->conn_capability_val.is_mesh_supported))
+				return -EINVAL;
 			hal_req->config_conn_capability = 1;
 			break;
 
 		case NAN_REQ_ATTR_CONN_CAPABILITY_IBSS:
-			hal_req->conn_capability_val.is_ibss_supported = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->conn_capability_val.is_ibss_supported))
+				return -EINVAL;
 			hal_req->config_conn_capability = 1;
 			break;
 
 		case NAN_REQ_ATTR_CONN_CAPABILITY_WLAN_INFRA:
-			hal_req->conn_capability_val.wlan_infra_field = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->conn_capability_val.wlan_infra_field))
+				return -EINVAL;
 			hal_req->config_conn_capability = 1;
 			break;
 
 		case NAN_REQ_ATTR_DISCOVERY_ATTR_NUM_ENTRIES:
-			hal_req->num_config_discovery_attr = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->num_config_discovery_attr))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_DISCOVERY_ATTR_VAL:
@@ -1447,51 +1662,62 @@ static int slsi_nan_config_get_nl_params(struct slsi_dev *sdev, struct slsi_hal_
 				type1 = nla_type(iter1);
 				switch (type1) {
 				case NAN_REQ_ATTR_CONN_TYPE:
-					disc_attr->type = nla_get_u8(iter1);
+					if (slsi_util_nla_get_u8(iter1, &disc_attr->type))
+						return -EINVAL;
 					break;
 
 				case NAN_REQ_ATTR_NAN_ROLE:
-					disc_attr->role = nla_get_u8(iter1);
+					if (slsi_util_nla_get_u8(iter1, &disc_attr->role))
+						return -EINVAL;
 					break;
 
 				case NAN_REQ_ATTR_TRANSMIT_FREQ:
-					disc_attr->transmit_freq = nla_get_u8(iter1);
+					if (slsi_util_nla_get_u8(iter1, &disc_attr->transmit_freq))
+						return -EINVAL;
 					break;
 
 				case NAN_REQ_ATTR_AVAILABILITY_DURATION:
-					disc_attr->duration = nla_get_u8(iter1);
+					if (slsi_util_nla_get_u8(iter1, &disc_attr->duration))
+						return -EINVAL;
 					break;
 
 				case NAN_REQ_ATTR_AVAILABILITY_INTERVAL:
-					disc_attr->avail_interval_bitmap = nla_get_u32(iter1);
+					if (slsi_util_nla_get_u32(iter1, &disc_attr->avail_interval_bitmap))
+						return -EINVAL;
 					break;
 
 				case NAN_REQ_ATTR_MAC_ADDR_VAL:
-					memcpy(disc_attr->addr, nla_data(iter1), ETH_ALEN);
+					if (slsi_util_nla_get_data(iter1, ETH_ALEN, disc_attr->addr))
+						return -EINVAL;
 					break;
 
 				case NAN_REQ_ATTR_MESH_ID_LEN:
-					disc_attr->mesh_id_len = nla_get_u16(iter1);
+					if (slsi_util_nla_get_u16(iter1, &disc_attr->mesh_id_len))
+						return -EINVAL;
 					break;
 
 				case NAN_REQ_ATTR_MESH_ID:
-					memcpy(disc_attr->mesh_id, nla_data(iter1), disc_attr->mesh_id_len);
+					if (slsi_util_nla_get_data(iter1, disc_attr->mesh_id_len, disc_attr->mesh_id))
+						return -EINVAL;
 					break;
 
 				case NAN_REQ_ATTR_INFRASTRUCTURE_SSID_LEN:
-					disc_attr->infrastructure_ssid_len = nla_get_u16(iter1);
+					if (slsi_util_nla_get_u16(iter1, &disc_attr->infrastructure_ssid_len))
+						return -EINVAL;
 					break;
 
 				case NAN_REQ_ATTR_INFRASTRUCTURE_SSID:
-					memcpy(disc_attr->infrastructure_ssid_val, nla_data(iter1),
-					       disc_attr->infrastructure_ssid_len);
+					if (slsi_util_nla_get_data(iter1, disc_attr->infrastructure_ssid_len,
+								   disc_attr->infrastructure_ssid_val))
+						return -EINVAL;
 					break;
 				}
 			}
 			break;
 
 		case NAN_REQ_ATTR_FURTHER_AVAIL_NUM_ENTRIES:
-			hal_req->fam_val.numchans = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->fam_val.numchans))
+				return -EINVAL;
 			hal_req->config_fam = 1;
 			break;
 
@@ -1509,53 +1735,67 @@ static int slsi_nan_config_get_nl_params(struct slsi_dev *sdev, struct slsi_hal_
 				type1 = nla_type(iter1);
 				switch (type1) {
 				case NAN_REQ_ATTR_FURTHER_AVAIL_ENTRY_CTRL:
-					famchan->entry_control = nla_get_u8(iter1);
+					if (slsi_util_nla_get_u8(iter1, &famchan->entry_control))
+						return -EINVAL;
 					break;
 
 				case NAN_REQ_ATTR_FURTHER_AVAIL_CHAN_CLASS:
-					famchan->class_val = nla_get_u8(iter1);
+					if (slsi_util_nla_get_u8(iter1, &famchan->class_val))
+						return -EINVAL;
 					break;
 
 				case NAN_REQ_ATTR_FURTHER_AVAIL_CHAN:
-					famchan->channel = nla_get_u8(iter1);
+					if (slsi_util_nla_get_u8(iter1, &famchan->channel))
+						return -EINVAL;
 					break;
 
 				case NAN_REQ_ATTR_FURTHER_AVAIL_CHAN_MAPID:
-					famchan->mapid = nla_get_u8(iter1);
+					if (slsi_util_nla_get_u8(iter1, &famchan->mapid))
+						return -EINVAL;
 					break;
 
 				case NAN_REQ_ATTR_FURTHER_AVAIL_INTERVAL_BITMAP:
-					famchan->avail_interval_bitmap = nla_get_u32(iter1);
+					if (slsi_util_nla_get_u32(iter1, &famchan->avail_interval_bitmap))
+						return -EINVAL;
 					break;
 				}
 			}
 			break;
 
 		case NAN_REQ_ATTR_SUBSCRIBE_SID_BEACON_VAL:
-			hal_req->subscribe_sid_beacon_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &val))
+				return -EINVAL;
+			hal_req->subscribe_sid_beacon_val = (u32)val;
 			hal_req->config_subscribe_sid_beacon = 1;
 			break;
 
 		case NAN_REQ_ATTR_DW_2G4_INTERVAL:
-			hal_req->dw_2dot4g_interval_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &val))
+				return -EINVAL;
+			hal_req->dw_2dot4g_interval_val = (u32)val;
 			/* valid range for 2.4G is 1-5 */
 			if (hal_req->dw_2dot4g_interval_val > 0  && hal_req->dw_2dot4g_interval_val < 6)
 				hal_req->config_2dot4g_dw_band = 1;
 			break;
 
 		case NAN_REQ_ATTR_DW_5G_INTERVAL:
-			hal_req->dw_5g_interval_val = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &val))
+				return -EINVAL;
+			hal_req->dw_5g_interval_val = (u32)val;
 			/* valid range for 5g is 0-5 */
 			if (hal_req->dw_5g_interval_val < 6)
 				hal_req->config_5g_dw_band = 1;
 			break;
 
 		case NAN_REQ_ATTR_DISC_MAC_ADDR_RANDOM_INTERVAL:
-			hal_req->disc_mac_addr_rand_interval_sec = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &val))
+				return -EINVAL;
+			hal_req->disc_mac_addr_rand_interval_sec = (u32)val;
 			break;
 
 		case NAN_REQ_ATTR_HAL_TRANSACTION_ID:
-			hal_req->transaction_id = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->transaction_id))
+				return -EINVAL;
 			break;
 
 		default:
@@ -1607,7 +1847,7 @@ int slsi_nan_set_config(struct wiphy *wiphy, struct wireless_dev *wdev, const vo
 	}
 	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 exit:
-	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_RESPONSE_CONFIG, 0, NULL, transaction_id);
+	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_RESPONSE_CONFIG, 0, NULL, transaction_id, ndev_vif);
 	return ret;
 }
 
@@ -1661,7 +1901,8 @@ int slsi_nan_get_capabilities(struct wiphy *wiphy, struct wireless_dev *wdev, co
 		type = nla_type(iter);
 		switch (type) {
 		case NAN_REQ_ATTR_HAL_TRANSACTION_ID:
-			transaction_id = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &(transaction_id)))
+				return -EINVAL;
 			break;
 		default:
 			break;
@@ -1693,7 +1934,7 @@ int slsi_nan_get_capabilities(struct wiphy *wiphy, struct wireless_dev *wdev, co
 	for (i = 0; i < (int)ARRAY_SIZE(get_values); i++) {
 		if (values[i].type == SLSI_MIB_TYPE_UINT) {
 			*capabilities_mib_val[i] = values[i].u.uintValue;
-			SLSI_DBG2(sdev, SLSI_GSCAN, "MIB value = %u\n", *capabilities_mib_val[i]);
+			SLSI_DBG3(sdev, SLSI_GSCAN, "MIB value = %u\n", *capabilities_mib_val[i]);
 		} else {
 			SLSI_ERR(sdev, "invalid type(%d). iter:%d\n", values[i].type, i);
 			ret = 0xFFFFFFFF;
@@ -1726,7 +1967,7 @@ exit_with_mibrsp:
 	kfree(mibrsp.data);
 	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 exit:
-	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_RESPONSE_GET_CAPABILITIES, 0, &nan_capabilities, transaction_id);
+	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_RESPONSE_GET_CAPABILITIES, 0, &nan_capabilities, transaction_id, ndev_vif);
 	return ret;
 }
 
@@ -1800,7 +2041,7 @@ int slsi_nan_data_iface_create(struct wiphy *wiphy, struct wireless_dev *wdev, c
 exit_with_lock:
 	SLSI_MUTEX_UNLOCK(sdev->netdev_add_remove_mutex);
 exit:
-	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_DP_INTERFACE_CREATE, 0, NULL, transaction_id);
+	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_DP_INTERFACE_CREATE, 0, NULL, transaction_id, ndev_data_vif);
 	return ret;
 }
 
@@ -1824,7 +2065,8 @@ int slsi_nan_data_iface_delete(struct wiphy *wiphy, struct wireless_dev *wdev, c
 		if (type == NAN_REQ_ATTR_DATA_INTERFACE_NAME)
 			iface_name = nla_data(iter);
 		else if (type == NAN_REQ_ATTR_HAL_TRANSACTION_ID)
-			transaction_id = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &(transaction_id)))
+				return -EINVAL;
 	}
 	if (!iface_name) {
 		SLSI_ERR(sdev, "No NAN data interface name\n");
@@ -1848,7 +2090,7 @@ int slsi_nan_data_iface_delete(struct wiphy *wiphy, struct wireless_dev *wdev, c
 
 	SLSI_MUTEX_UNLOCK(sdev->netdev_add_remove_mutex);
 exit:
-	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_DP_INTERFACE_DELETE, 0, NULL, transaction_id);
+	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_DP_INTERFACE_DELETE, 0, NULL, transaction_id, NULL);
 	return ret;
 }
 
@@ -1863,15 +2105,18 @@ int slsi_nan_ndp_initiate_get_nl_params(struct slsi_dev *sdev, struct slsi_hal_n
 		type = nla_type(iter);
 		switch (type) {
 		case NAN_REQ_ATTR_REQ_INSTANCE_ID:
-			hal_req->requestor_instance_id = nla_get_u32(iter);
+			if (slsi_util_nla_get_u32(iter, &hal_req->requestor_instance_id))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_CHAN_REQ_TYPE:
-			hal_req->channel_request_type = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->channel_request_type))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_CHAN:
-			hal_req->channel = nla_get_u32(iter);
+			if (slsi_util_nla_get_u32(iter, &hal_req->channel))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_MAC_ADDR_VAL:
@@ -1879,38 +2124,46 @@ int slsi_nan_ndp_initiate_get_nl_params(struct slsi_dev *sdev, struct slsi_hal_n
 			break;
 
 		case NAN_REQ_ATTR_DATA_INTERFACE_NAME:
-			memcpy(hal_req->ndp_iface, nla_data(iter), IFNAMSIZ);
+			if (slsi_util_nla_get_data(iter, IFNAMSIZ, hal_req->ndp_iface))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_DATA_INTERFACE_NAME_LEN:
 			break;
 
 		case NAN_REQ_ATTR_SDEA_PARAM_SECURITY_CFG:
-			hal_req->ndp_cfg.security_cfg = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->ndp_cfg.security_cfg))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SDEA_PARAM_QOS_CFG:
-			hal_req->ndp_cfg.qos_cfg =  nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->ndp_cfg.qos_cfg))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_APP_INFO_LEN:
-			hal_req->app_info.ndp_app_info_len = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->app_info.ndp_app_info_len))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_APP_INFO:
-			memcpy(hal_req->app_info.ndp_app_info, nla_data(iter), hal_req->app_info.ndp_app_info_len);
+			if (slsi_util_nla_get_data(iter, hal_req->app_info.ndp_app_info_len, hal_req->app_info.ndp_app_info))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SERVICE_NAME_LEN:
-			hal_req->service_name_len = nla_get_u32(iter);
+			if (slsi_util_nla_get_u32(iter, &hal_req->service_name_len))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SERVICE_NAME:
-			memcpy(hal_req->service_name, nla_data(iter), hal_req->service_name_len);
+			if (slsi_util_nla_get_data(iter, hal_req->service_name_len, hal_req->service_name))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_HAL_TRANSACTION_ID:
-			hal_req->transaction_id = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->transaction_id))
+				return -EINVAL;
 			break;
 
 		default:
@@ -1989,7 +2242,7 @@ int slsi_nan_ndp_initiate(struct wiphy *wiphy, struct wireless_dev *wdev, const 
 exit_with_lock:
 	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 exit:
-	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_DP_INITIATOR_RESPONSE, (u16)ndp_id, NULL, transaction_id);
+	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_DP_INITIATOR_RESPONSE, (u16)ndp_id, NULL, transaction_id, ndev_vif);
 	kfree(hal_req);
 	return ret;
 }
@@ -1999,51 +2252,65 @@ int slsi_nan_ndp_respond_get_nl_param(struct slsi_dev *sdev, struct slsi_hal_nan
 {
 	int type, tmp, r;
 	const struct nlattr *iter;
+	u8 val = 0;
+	u32 value = 0;
 
 	memset(hal_req, 0, sizeof(*hal_req));
 	nla_for_each_attr(iter, data, len, tmp) {
 		type = nla_type(iter);
 		switch (type) {
 		case NAN_REQ_ATTR_NDP_INSTANCE_ID:
-			hal_req->ndp_instance_id = nla_get_u32(iter);
+			if (slsi_util_nla_get_u32(iter, &hal_req->ndp_instance_id))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_DATA_INTERFACE_NAME:
-			memcpy(hal_req->ndp_iface, nla_data(iter), IFNAMSIZ);
+			if (slsi_util_nla_get_data(iter, IFNAMSIZ, hal_req->ndp_iface))
+				return -EINVAL;
 			break;
 		case NAN_REQ_ATTR_DATA_INTERFACE_NAME_LEN:
 			break;
 
 		case NAN_REQ_ATTR_SDEA_PARAM_SECURITY_CFG:
-			hal_req->ndp_cfg.security_cfg = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->ndp_cfg.security_cfg))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_SDEA_PARAM_QOS_CFG:
-			hal_req->ndp_cfg.qos_cfg =  nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &hal_req->ndp_cfg.qos_cfg))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_APP_INFO_LEN:
-			hal_req->app_info.ndp_app_info_len = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->app_info.ndp_app_info_len))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_APP_INFO:
-			memcpy(hal_req->app_info.ndp_app_info, nla_data(iter), hal_req->app_info.ndp_app_info_len);
+			if (slsi_util_nla_get_data(iter, hal_req->app_info.ndp_app_info_len, hal_req->app_info.ndp_app_info))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_NDP_RESPONSE_CODE:
-			hal_req->rsp_code = nla_get_u8(iter);
+			if (slsi_util_nla_get_u8(iter, &val))
+				return -EINVAL;
+			hal_req->rsp_code = (u32)val;
 			break;
 
 		case NAN_REQ_ATTR_SERVICE_NAME_LEN:
-			hal_req->service_name_len = nla_get_u32(iter);
+			if (slsi_util_nla_get_u32(iter, &value))
+				return -EINVAL;
+			hal_req->service_name_len = (u8)value;
 			break;
 
 		case NAN_REQ_ATTR_SERVICE_NAME:
-			memcpy(hal_req->service_name, nla_data(iter), hal_req->service_name_len);
+			if (slsi_util_nla_get_data(iter, hal_req->service_name_len, hal_req->service_name))
+				return -EINVAL;
 			break;
 
 		case NAN_REQ_ATTR_HAL_TRANSACTION_ID:
-			hal_req->transaction_id = nla_get_u16(iter);
+			if (slsi_util_nla_get_u16(iter, &hal_req->transaction_id))
+				return -EINVAL;
 			break;
 
 		default:
@@ -2113,7 +2380,7 @@ exit_with_lock:
 	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 exit:
 	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_DP_RESPONDER_RESPONSE,
-				      ndp_instance_id, NULL, transaction_id);
+				      ndp_instance_id, NULL, transaction_id, ndev_vif);
 	kfree(hal_req);
 	return ret;
 }
@@ -2123,14 +2390,19 @@ int slsi_nan_ndp_end_get_nl_params(struct slsi_dev *sdev, struct slsi_hal_nan_da
 {
 	int type, tmp;
 	const struct nlattr *iter;
+	u32 val = 0;
 
 	memset(hal_req, 0, sizeof(*hal_req));
 	nla_for_each_attr(iter, data, len, tmp) {
 		type = nla_type(iter);
-		if (type == NAN_REQ_ATTR_NDP_INSTANCE_ID && hal_req->num_ndp_instances < SLSI_NAN_MAX_NDP_INSTANCES)
-			hal_req->ndp_instance_id[hal_req->num_ndp_instances++] = nla_get_u32(iter);
-		else if (type == NAN_REQ_ATTR_HAL_TRANSACTION_ID)
-			hal_req->transaction_id = nla_get_u16(iter);
+		if (type == NAN_REQ_ATTR_NDP_INSTANCE_ID && hal_req->num_ndp_instances < SLSI_NAN_MAX_NDP_INSTANCES) {
+			if (slsi_util_nla_get_u32(iter, &val))
+				return -EINVAL;
+			hal_req->ndp_instance_id[hal_req->num_ndp_instances++] = val;
+		} else if (type == NAN_REQ_ATTR_HAL_TRANSACTION_ID) {
+			if (slsi_util_nla_get_u16(iter, &hal_req->transaction_id))
+				return -EINVAL;
+		}
 	}
 	return SLSI_HAL_NAN_STATUS_SUCCESS;
 }
@@ -2166,10 +2438,12 @@ int slsi_nan_ndp_end(struct wiphy *wiphy, struct wireless_dev *wdev, const void 
 	}
 	for (i = 0; i < hal_req.num_ndp_instances; i++)
 		if (hal_req.ndp_instance_id[i] > 0 && hal_req.ndp_instance_id[i] <= SLSI_NAN_MAX_NDP_INSTANCES) {
-			ndev_vif->nan.ndp_state[hal_req.ndp_instance_id[i] - 1] = ndp_slot_status_terminating;
-			slsi_mlme_ndp_terminate(sdev, dev, hal_req.ndp_instance_id[i]);
-			SLSI_INFO(sdev, "transId:%d ndpId:%d [%d/%d]\n",
-				  hal_req.transaction_id, hal_req.ndp_instance_id[i], i, hal_req.num_ndp_instances);
+			ret = slsi_mlme_ndp_terminate(sdev, dev, hal_req.ndp_instance_id[i]);
+			SLSI_INFO(sdev,
+				  "transId:%d ndpId:%d [%d/%d] mlme_terminate return:%d\n",
+				  hal_req.transaction_id, hal_req.ndp_instance_id[i], i, hal_req.num_ndp_instances, ret);
+			if (!ret)
+				ndev_vif->nan.ndp_state[hal_req.ndp_instance_id[i] - 1] = ndp_slot_status_terminating;
 		} else {
 			SLSI_ERR(sdev, "Ignore invalid ndp_id:%d\n", hal_req.ndp_instance_id[i]);
 		}
@@ -2177,7 +2451,7 @@ int slsi_nan_ndp_end(struct wiphy *wiphy, struct wireless_dev *wdev, const void 
 exit_with_lock:
 	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 exit:
-	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_DP_END, 0, NULL, hal_req.transaction_id);
+	slsi_vendor_nan_command_reply(wiphy, reply_status, ret, NAN_DP_END, 0, NULL, hal_req.transaction_id, ndev_vif);
 	return ret;
 }
 
@@ -2702,9 +2976,9 @@ void slsi_nan_ndp_setup_ind(struct slsi_dev *sdev, struct net_device *dev, struc
 				res |= nla_put(nl_skb, NAN_EVT_ATTR_APP_INFO, tag_len, tag_data_ptr);
 				break;
 			} else if (tag_id == SLSI_NAN_TLV_WFA_SERVICE_INFO) {
-				res |= nla_put_u16(nl_skb, NAN_EVT_ATTR_APP_INFO_LEN, tag_len+3);//Tag 1 Bytes Length 2 bytes
-				ptr[1]=ptr[0];
-				res |= nla_put(nl_skb, NAN_EVT_ATTR_APP_INFO, tag_len+3, &ptr[1]);
+				res |= nla_put_u16(nl_skb, NAN_EVT_ATTR_APP_INFO_LEN, tag_len + 3);//Tag 1 Bytes Length 2 bytes
+				ptr[1] = ptr[0];
+				res |= nla_put(nl_skb, NAN_EVT_ATTR_APP_INFO, tag_len + 3, &ptr[1]);
 				break;
 			}
 			sig_data_len -= tag_len + 4;
@@ -2753,9 +3027,10 @@ void slsi_nan_ndp_setup_ind(struct slsi_dev *sdev, struct net_device *dev, struc
 		ndev_data_vif = netdev_priv(data_dev);
 		SLSI_MUTEX_LOCK(ndev_data_vif->vif_mutex);
 
-		/* for NAN NDI VIF, the host does not create the VIF. But a successful
-		 * MLME-NDP-REQUEST/RESPONSE.indication indicates the NDL VIF is successfully
-		 * created/associated in Firmware. So "activated" is set to True here.
+		/* For NAN NDI VIF, the host does not create the VIF.
+		 * But a successful MLME-NDP-REQUEST/RESPONSE.indication
+		 * indicates the NDL VIF is successfully created/associated
+		 * in Firmware. So "activated" is set to True here.
 		 */
 		ndev_data_vif->activated = true;
 		peer = slsi_peer_add(sdev, data_dev, peer_ndi, ndp_id);

@@ -1129,8 +1129,8 @@ static ssize_t slsi_procfs_nan_info_read(struct file *file,  char __user *user_b
 	pos += scnprintf(buf + pos, bufsz - pos, "%d", nan_data->state);
 	pos += scnprintf(buf + pos, bufsz, ",MASTERPREFVAL,");
 	pos += scnprintf(buf + pos, bufsz - pos, "%d", nan_data->master_pref_value);
-	pos += scnprintf(buf + pos, bufsz, ",AMT,");
-	pos += scnprintf(buf + pos, bufsz - pos, "%d", nan_data->amt);
+	pos += scnprintf(buf + pos, bufsz, ",AMR,");
+	pos += scnprintf(buf + pos, bufsz - pos, "%d", nan_data->amr);
 	pos += scnprintf(buf + pos, bufsz, ",HOPCOUNT,");
 	pos += scnprintf(buf + pos, bufsz - pos, "%d", nan_data->hopcount);
 	pos += scnprintf(buf + pos, bufsz, ",NMIRANDOMINTERVAL,");

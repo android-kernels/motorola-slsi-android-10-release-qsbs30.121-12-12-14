@@ -111,14 +111,23 @@ static int slsi_rx_amsdu_deaggregate(struct net_device *dev, struct sk_buff *skb
 	while (!last_sub_frame) {
 		msdu_len = (skb->data[ETH_ALEN * 2] << 8) | skb->data[(ETH_ALEN * 2) + 1];
 
-		/* check if the length of sub-frame is valid */
-		if (msdu_len > skb->len) {
+		/* check if the MSDU length field is non-zero or if length is valid */
+		if (!msdu_len || msdu_len >= skb->len) {
 			SLSI_NET_ERR(dev, "invalid MSDU length %d, SKB length = %d\n", msdu_len, skb->len);
+			__skb_queue_purge(msdu_list);
 			slsi_kfree_skb(skb);
 			return -EINVAL;
 		}
 
 		subframe_len = msdu_len + (2 * ETH_ALEN) + 2;
+
+		/* check if the length of sub-frame is valid */
+		if (subframe_len > skb->len) {
+			SLSI_NET_ERR(dev, "invalid subframe length %d, SKB length = %d\n", subframe_len, skb->len);
+			__skb_queue_purge(msdu_list);
+			slsi_kfree_skb(skb);
+			return -EINVAL;
+		}
 
 		/* For the last subframe skb length and subframe length will be same */
 		if (skb->len == subframe_len) {
@@ -172,8 +181,18 @@ static int slsi_rx_amsdu_deaggregate(struct net_device *dev, struct sk_buff *skb
 		}
 
 		/* If this is not the last subframe then move to the next subframe */
-		if (!last_sub_frame)
-			skb_pull(skb, (subframe_len + padding));
+		if (!last_sub_frame) {
+			/* If A-MSDU is not formed correctly (e.g when skb->len < subframe_len + padding),
+			 * skb_pull() will return NULL without any manipulation in skb.
+			 * It can lead to infinite loop.
+			 */
+			if (!skb_pull(skb, (subframe_len + padding))) {
+				SLSI_NET_ERR(dev, "Invalid subframe + padding length=%d, SKB length=%d\n", subframe_len + padding, skb->len);
+				__skb_queue_purge(msdu_list);
+				slsi_kfree_skb(skb);
+				return -EINVAL;
+			}
+		}
 
 		/* If this frame has been filtered out, free the clone and continue */
 		if (skip_frame) {

@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2012 - 2019 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2012 - 2020 Samsung Electronics Co., Ltd. All rights reserved
  *
  ****************************************************************************/
 #include <linux/etherdevice.h>
@@ -158,6 +158,7 @@ static int slsi_add_to_scan_list(struct slsi_dev *sdev, struct netdev_vif *ndev_
 	struct ieee80211_mgmt *mgmt = fapi_get_mgmt(skb);
 	bool found = 0, skb_stored = 0;
 	int current_rssi, current_band;
+	bool is_hidden = 0, ssid_matched = 0;
 
 	SLSI_MUTEX_LOCK(ndev_vif->scan_result_mutex);
 	head = ndev_vif->scan[scan_id].scan_results;
@@ -168,7 +169,12 @@ static int slsi_add_to_scan_list(struct slsi_dev *sdev, struct netdev_vif *ndev_
 			2000) == 2 ? SLSI_FREQ_BAND_2GHZ : SLSI_FREQ_BAND_5GHZ;
 
 	while (scan_result) {
-		if (SLSI_ETHER_EQUAL(scan_result->bssid, mgmt->bssid) && (scan_result->band == current_band)) {
+		is_hidden = scan_result->hidden && (!scan_ssid || !scan_ssid[1] || scan_ssid[2] == '\0');
+		ssid_matched = scan_ssid && scan_ssid[1] && scan_result->ssid_length &&
+			       (scan_ssid[1] == scan_result->ssid_length) &&
+			       !memcmp(&scan_ssid[2], scan_result->ssid, scan_ssid[1]);
+		if ((SLSI_ETHER_EQUAL(scan_result->bssid, mgmt->bssid) && (scan_result->band == current_band)) &&
+		    (is_hidden || ssid_matched)) {
 			/*entry exists for bssid*/
 			if (!scan_result->probe_resp && ieee80211_is_probe_resp(mgmt->frame_control)) {
 				scan_result->probe_resp = skb;
@@ -232,6 +238,12 @@ static int slsi_add_to_scan_list(struct slsi_dev *sdev, struct netdev_vif *ndev_
 
 		current_result->rssi = current_rssi;
 		current_result->band = current_band;
+		if (scan_ssid && scan_ssid[1]) {
+			memcpy(current_result->ssid, &scan_ssid[2], scan_ssid[1]);
+			current_result->ssid_length = scan_ssid[1];
+		} else {
+			current_result->ssid_length = 0;
+		}
 		if (ieee80211_is_beacon(mgmt->frame_control)) {
 			current_result->beacon = skb;
 			if (!scan_ssid || !scan_ssid[1] || scan_ssid[2] == '\0')
@@ -327,6 +339,10 @@ void slsi_rx_scan_ind(struct slsi_dev *sdev, struct net_device *dev, struct sk_b
 #endif
 
 	scan_ssid = cfg80211_find_ie(WLAN_EID_SSID, mgmt->u.probe_resp.variable, ie_len);
+	if (scan_ssid && scan_ssid[1] && ((ie_len - (scan_ssid - mgmt->u.probe_resp.variable) + 2) < scan_ssid[1])) {
+		slsi_kfree_skb(skb);
+		return;
+	}
 
 	if (sdev->p2p_certif && (ndev_vif->iftype == NL80211_IFTYPE_P2P_CLIENT) && (scan_id == (ndev_vif->ifnum << 8 | SLSI_SCAN_HW_ID))) {
 		/* When supplicant receives a peer GO probe response with selected registrar set and group capability as 0,
@@ -895,15 +911,15 @@ int slsi_set_band_any_auto_channel(struct slsi_dev *sdev, struct netdev_vif  *nd
 	memset(&ch_info_5g, 0, sizeof(ch_info_5g));
 	memset(&ch_info_2g, 0, sizeof(ch_info_2g));
 
-	for(i = MAX_24G_CHANNELS; i < MAX_CHAN_VALUE_ACS; i++) {
+	for (i = MAX_24G_CHANNELS; i < MAX_CHAN_VALUE_ACS; i++) {
 		ch_info_5g[j] = ch_info[i];
 		j++;
 	}
 	ret = slsi_set_5g_auto_channel(sdev, ndev_vif, &acs_selected_channels_5g, ch_info_5g);
 
-	if(ret == 0) {
+	if (ret == 0) {
 		best_channel_5g = acs_selected_channels_5g.pri_channel;
-		for(i = 0; i < MAX_5G_CHANNELS; i++) {
+		for (i = 0; i < MAX_5G_CHANNELS; i++) {
 			if (ch_info_5g[i].chan == best_channel_5g) {
 				best_channel_5g_num_ap = ch_info_5g[i].num_ap;
 				break;
@@ -920,14 +936,14 @@ int slsi_set_band_any_auto_channel(struct slsi_dev *sdev, struct netdev_vif  *nd
 
 	SLSI_DBG3(sdev, SLSI_MLME, "5G AP threshold exceed, trying to select from 2G band\n");
 
-	for(i = 0; i < MAX_24G_CHANNELS; i++) {
+	for (i = 0; i < MAX_24G_CHANNELS; i++) {
 		ch_info_2g[i] = ch_info[i];
 	}
 	ret = slsi_set_2g_auto_channel(sdev, ndev_vif, &acs_selected_channels_2g, ch_info_2g);
 
-	if(ret == 0) {
+	if (ret == 0) {
 		best_channel_2g = acs_selected_channels_2g.pri_channel;
-		for(i = 0; i < MAX_24G_CHANNELS; i++) {
+		for (i = 0; i < MAX_24G_CHANNELS; i++) {
 			if (ch_info_2g[i].chan == best_channel_2g) {
 				best_channel_2g_num_ap = ch_info_2g[i].num_ap;
 				break;
@@ -941,7 +957,7 @@ int slsi_set_band_any_auto_channel(struct slsi_dev *sdev, struct netdev_vif  *nd
 		} else {
 			/* Based on min no of APs selecting channel from that band */
 			/* If no. of APs are equal, selecting the 5G channel */
-			if(best_channel_5g_num_ap > best_channel_2g_num_ap)
+			if (best_channel_5g_num_ap > best_channel_2g_num_ap)
 				*acs_selected_channels = acs_selected_channels_2g;
 			else
 				*acs_selected_channels = acs_selected_channels_5g;
@@ -1524,6 +1540,7 @@ void slsi_rx_roamed_ind(struct slsi_dev *sdev, struct net_device *dev, struct sk
 
 		ndev_vif->sta.roam_in_progress = false;
 		ndev_vif->chan = ndev_vif->sta.sta_bss->channel;
+		SLSI_ETHER_COPY(ndev_vif->sta.bssid, peer->address);
 #if !defined SLSI_TEST_DEV && defined CONFIG_ANDROID
 		SLSI_NET_DBG1(dev, SLSI_MLME, "Taking a wakelock for DHCP to finish after roaming\n");
 		wake_lock_timeout(&sdev->wlan_wl_roam, msecs_to_jiffies(10 * 1000));
@@ -2037,20 +2054,13 @@ void slsi_rx_connect_ind(struct slsi_dev *sdev, struct net_device *dev, struct s
 		status = fw_result_code;
 #ifdef CONFIG_SCSC_WLAN_SAE_CONFIG
 	if (ndev_vif->sta.crypto.wpa_versions == 3) {
-		const u8  *connecting_ssid = NULL;
 		int r;
 		struct cfg80211_external_auth_params auth_request;
 
-		if (ndev_vif->sta.sta_bss->ies->len)
-			connecting_ssid = cfg80211_find_ie(WLAN_EID_SSID, ndev_vif->sta.sta_bss->ies->data,
-							   ndev_vif->sta.sta_bss->ies->len);
-
 		auth_request.action = NL80211_EXTERNAL_AUTH_ABORT;
-		memcpy(auth_request.bssid, ndev_vif->sta.sta_bss->bssid, ETH_ALEN);
-		if (connecting_ssid && (connecting_ssid[1] > 0)) {
-			memcpy(auth_request.ssid.ssid, &connecting_ssid[2], connecting_ssid[1]);
-			auth_request.ssid.ssid_len = connecting_ssid[1];
-		}
+		memcpy(auth_request.bssid, ndev_vif->sta.bssid, ETH_ALEN);
+		memcpy(auth_request.ssid.ssid, ndev_vif->sta.ssid, ndev_vif->sta.ssid_len);
+		auth_request.ssid.ssid_len = ndev_vif->sta.ssid_len;
 		auth_request.key_mgmt_suite = ndev_vif->sta.crypto.akm_suites[0];
 		r = cfg80211_external_auth_request(dev, &auth_request, GFP_KERNEL);
 		if (r)
@@ -2409,7 +2419,7 @@ void slsi_rx_procedure_started_ind(struct slsi_dev *sdev, struct net_device *dev
 		break;
 	case FAPI_PROCEDURETYPE_DEVICE_DISCOVERED:
 		/* Expected only in P2P Device and P2P GO role */
-		if (!SLSI_IS_VIF_INDEX_P2P(ndev_vif) && (ndev_vif->iftype != NL80211_IFTYPE_P2P_GO)){
+		if (!SLSI_IS_VIF_INDEX_P2P(ndev_vif) && (ndev_vif->iftype != NL80211_IFTYPE_P2P_GO)) {
 			SLSI_NET_DBG1(dev, SLSI_MLME, "PROCEDURETYPE_DEVICE_DISCOVERED recd in non P2P role\n");
 			goto exit_with_lock;
 		}
@@ -2453,9 +2463,19 @@ void slsi_rx_frame_transmission_ind(struct slsi_dev *sdev, struct net_device *de
 
 	SLSI_MUTEX_LOCK(ndev_vif->vif_mutex);
 
-	SLSI_NET_DBG2(dev, SLSI_MLME, "mlme_frame_transmission_ind(vif:%d, host_tag:%d, transmission_status:%d)\n", fapi_get_vif(skb),
-		      host_tag,
-		      tx_status);
+	SLSI_NET_DBG2(dev, SLSI_MLME,
+		      "vif:%d host_tag:0x%x transmission_status:%d\n",
+		      fapi_get_vif(skb), host_tag, tx_status);
+
+#ifdef CONFIG_SCSC_WLAN_ARP_FLOW_CONTROL
+	if (host_tag & SLSI_HOST_TAG_ARP_MASK) {
+		atomic_dec(&sdev->arp_tx_count);
+		atomic_dec(&ndev_vif->arp_tx_count);
+		if (atomic_read(&sdev->ctrl_pause_state) &&
+		    atomic_read(&sdev->arp_tx_count) < (sdev->fw_max_arp_count - SLSI_ARP_UNPAUSE_THRESHOLD))
+			scsc_wifi_unpause_ctrl_q_all_vif(sdev);
+	}
+#endif
 
 	if (ndev_vif->mgmt_tx_data.host_tag == host_tag) {
 		struct netdev_vif *ndev_vif_to_cfg = ndev_vif;
@@ -2588,6 +2608,9 @@ void slsi_rx_received_frame_ind(struct slsi_dev *sdev, struct net_device *dev, s
 	u32 dhcp_message_type = SLSI_DHCP_MESSAGE_TYPE_INVALID;
 	u16                 eap_length = 0;
 	int subtype = SLSI_PA_INVALID;
+	char log_str_buffer[128] = {0};
+	struct sk_buff *log_skb = NULL;
+	bool is_dropped = false;
 
 	SLSI_NET_DBG2(dev, SLSI_MLME, "mlme_received_frame_ind(vif:%d, data descriptor:%d, freq:%d)\n",
 		      fapi_get_vif(skb),
@@ -2733,52 +2756,60 @@ void slsi_rx_received_frame_ind(struct slsi_dev *sdev, struct net_device *dev, s
 				     SLSI_EAPOL_KEY_INFO_MIC_BIT_IN_HIGHER_BYTE) &&
 				    (eapol[SLSI_EAPOL_KEY_DATA_LENGTH_HIGHER_BYTE_POS] == 0) &&
 				    (eapol[SLSI_EAPOL_KEY_DATA_LENGTH_LOWER_BYTE_POS] == 0)) {
-					SLSI_INFO(sdev, "Received 4way-H/S, M4\n");
+					snprintf(log_str_buffer, sizeof(log_str_buffer), "4way-H/S, M4");
 				} else if (!(eapol[SLSI_EAPOL_KEY_INFO_HIGHER_BYTE_POS] &
 					     SLSI_EAPOL_KEY_INFO_MIC_BIT_IN_HIGHER_BYTE)) {
-					SLSI_INFO(sdev, "Received 4way-H/S, M1\n");
+					snprintf(log_str_buffer, sizeof(log_str_buffer), "4way-H/S, M1");
 				} else if (eapol[SLSI_EAPOL_KEY_INFO_HIGHER_BYTE_POS] &
 					   SLSI_EAPOL_KEY_INFO_SECURE_BIT_IN_HIGHER_BYTE) {
-					SLSI_INFO(sdev, "Received 4way-H/S, M3\n");
+					snprintf(log_str_buffer, sizeof(log_str_buffer), "4way-H/S, M3");
 				} else {
-					SLSI_INFO(sdev, "Received 4way-H/S, M2\n");
+					snprintf(log_str_buffer, sizeof(log_str_buffer), "4way-H/S, M2");
 				}
 			} else if (eap && eap[SLSI_EAPOL_IEEE8021X_TYPE_POS] == SLSI_IEEE8021X_TYPE_EAP_PACKET) {
 				if (eap[SLSI_EAP_CODE_POS] == SLSI_EAP_PACKET_REQUEST)
-					SLSI_INFO(sdev, "Received EAP-Request (%d)\n", eap_length);
+					snprintf(log_str_buffer, sizeof(log_str_buffer), "EAP-Request (%d)", eap_length);
 				else if (eap[SLSI_EAP_CODE_POS] == SLSI_EAP_PACKET_RESPONSE)
-					SLSI_INFO(sdev, "Received EAP-Response (%d)\n", eap_length);
+					snprintf(log_str_buffer, sizeof(log_str_buffer), "EAP-Response (%d)", eap_length);
 				else if (eap[SLSI_EAP_CODE_POS] == SLSI_EAP_PACKET_SUCCESS)
-					SLSI_INFO(sdev, "Received EAP-Success (%d)\n", eap_length);
+					snprintf(log_str_buffer, sizeof(log_str_buffer), "EAP-Success (%d)", eap_length);
 				else if (eap[SLSI_EAP_CODE_POS] == SLSI_EAP_PACKET_FAILURE)
-					SLSI_INFO(sdev, "Received EAP-Failure (%d)\n", eap_length);
+					snprintf(log_str_buffer, sizeof(log_str_buffer), "EAP-Failure (%d)", eap_length);
 			}
 		} else if (protocol == ETH_P_IP) {
 			if (dhcp_message_type == SLSI_DHCP_MESSAGE_TYPE_DISCOVER)
-				SLSI_INFO(sdev, "Received DHCP [DISCOVER]\n");
+				snprintf(log_str_buffer, sizeof(log_str_buffer), "DHCP [DISCOVER]");
 			else if (dhcp_message_type == SLSI_DHCP_MESSAGE_TYPE_OFFER)
-				SLSI_INFO(sdev, "Received DHCP [OFFER]\n");
+				snprintf(log_str_buffer, sizeof(log_str_buffer), "DHCP [OFFER]");
 			else if (dhcp_message_type == SLSI_DHCP_MESSAGE_TYPE_REQUEST)
-				SLSI_INFO(sdev, "Received DHCP [REQUEST]\n");
+				snprintf(log_str_buffer, sizeof(log_str_buffer), "DHCP [REQUEST]");
 			else if (dhcp_message_type == SLSI_DHCP_MESSAGE_TYPE_DECLINE)
-				SLSI_INFO(sdev, "Received DHCP [DECLINE]\n");
+				snprintf(log_str_buffer, sizeof(log_str_buffer), "DHCP [DECLINE]");
 			else if (dhcp_message_type == SLSI_DHCP_MESSAGE_TYPE_ACK)
-				SLSI_INFO(sdev, "Received DHCP [ACK]\n");
+				snprintf(log_str_buffer, sizeof(log_str_buffer), "DHCP [ACK]");
 			else if (dhcp_message_type == SLSI_DHCP_MESSAGE_TYPE_NAK)
-				SLSI_INFO(sdev, "Received DHCP [NAK]\n");
+				snprintf(log_str_buffer, sizeof(log_str_buffer), "DHCP [NAK]");
 			else if (dhcp_message_type == SLSI_DHCP_MESSAGE_TYPE_RELEASE)
-				SLSI_INFO(sdev, "Received DHCP [RELEASE]\n");
+				snprintf(log_str_buffer, sizeof(log_str_buffer), "DHCP [RELEASE]");
 			else if (dhcp_message_type == SLSI_DHCP_MESSAGE_TYPE_INFORM)
-				SLSI_INFO(sdev, "Received DHCP [INFORM]\n");
+				snprintf(log_str_buffer, sizeof(log_str_buffer), "DHCP [INFORM]");
 			else if (dhcp_message_type == SLSI_DHCP_MESSAGE_TYPE_FORCERENEW)
-				SLSI_INFO(sdev, "Received DHCP [FORCERENEW]\n");
+				snprintf(log_str_buffer, sizeof(log_str_buffer), "DHCP [FORCERENEW]");
 			else
-				SLSI_INFO(sdev, "Received DHCP [INVALID]\n");
+				snprintf(log_str_buffer, sizeof(log_str_buffer), "DHCP [INVALID]");
 		}
 		slsi_dbg_untrack_skb(skb);
 		SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 		SLSI_DBG2(sdev, SLSI_MLME, "pass %u bytes up (proto:%d)\n", skb->len, ntohs(skb->protocol));
-		netif_rx_ni(skb);
+		log_skb = skb_copy(skb, GFP_ATOMIC);
+		is_dropped = (NET_RX_DROP == netif_rx_ni(skb));
+		if (log_str_buffer[0])
+			SLSI_INFO(sdev, "%s %s\n", (is_dropped?"Dropped":"Received"), log_str_buffer);
+		if (log_skb) {
+			if (is_dropped)
+				SLSI_INFO_HEX_NODEV(log_skb->data, (log_skb->len < 128?log_skb->len:128), "HEX Dump:\n");
+			kfree_skb(log_skb);
+		}
 		slsi_wakelock_timeout(&sdev->wlan_wl_mlme, SLSI_WAKELOCK_TIME_MSEC_EAPOL);
 		return;
 	}

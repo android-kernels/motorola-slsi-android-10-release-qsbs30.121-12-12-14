@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2012 - 2019 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2012 - 2020 Samsung Electronics Co., Ltd. All rights reserved
  *
  ****************************************************************************/
 
@@ -81,6 +81,12 @@
 #define SLSI_HOSTSTATE_SAR_ACTIVE         0x0004
 #define SLSI_HOSTSTATE_GRIP_ACTIVE        0x0040
 #define SLSI_HOSTSTATE_LOW_LATENCY_ACTIVE 0x0080
+#define SLSI_HOST_TAG_ARP_MASK            BIT(15)
+#define SLSI_ARP_UNPAUSE_THRESHOLD        4
+
+#ifdef CONFIG_SCSC_WLAN_STA_ENHANCED_ARP_DETECT
+#define SLSI_MAX_ARP_SEND_FRAME  8
+#endif
 
 /* indices: 3= BW20->idx_0, BW40->idx_1, BW80->idx_2.
  *             2= noSGI->idx_0, SGI->idx_1
@@ -180,14 +186,14 @@ static inline void ethr_ii_to_subframe_msdu(struct sk_buff *skb)
 
 #ifdef CONFIG_SCSC_WLAN_MUTEX_DEBUG
 #define SLSI_MUTEX_INIT(slsi_mutex__) \
-	{ \
+	do { \
 		(slsi_mutex__).owner = NULL; \
 		mutex_init(&(slsi_mutex__).mutex); \
 		(slsi_mutex__).valid = true; \
-	}
+	} while(0)
 
 #define SLSI_MUTEX_LOCK(slsi_mutex_to_lock) \
-	{ \
+	do { \
 		(slsi_mutex_to_lock).line_no_before = __LINE__; \
 		(slsi_mutex_to_lock).file_name_before = __FILE__; \
 		mutex_lock(&(slsi_mutex_to_lock).mutex); \
@@ -195,13 +201,13 @@ static inline void ethr_ii_to_subframe_msdu(struct sk_buff *skb)
 		(slsi_mutex_to_lock).line_no_after = __LINE__; \
 		(slsi_mutex_to_lock).file_name_after = __FILE__; \
 		(slsi_mutex_to_lock).function = __func__; \
-	}
+	} while(0)
 
 #define SLSI_MUTEX_UNLOCK(slsi_mutex_to_unlock) \
-	{ \
+	do { \
 		(slsi_mutex_to_unlock).owner = NULL; \
 		mutex_unlock(&(slsi_mutex_to_unlock).mutex); \
-	}
+	} while(0)
 #define SLSI_MUTEX_IS_LOCKED(slsi_mutex__) mutex_is_locked(&(slsi_mutex__).mutex)
 
 struct slsi_mutex {
@@ -319,6 +325,8 @@ struct slsi_scan_result {
 	struct sk_buff *beacon;
 	struct slsi_scan_result *next;
 	int band;
+	u8 ssid[32];
+	u8 ssid_length;
 };
 
 /* Per Interface Scan Data
@@ -596,6 +604,9 @@ struct slsi_vif_sta {
 	atomic_t                drop_roamed_ind;
 	u8                      *vendor_disconnect_ies;
 	int                     vendor_disconnect_ies_len;
+	u8                      bssid[ETH_ALEN];
+	u8                      ssid[IEEE80211_MAX_SSID_LEN];
+	u8                      ssid_len;
 #ifdef CONFIG_SCSC_WLAN_SAE_CONFIG
 	u8                      *rsn_ie;
 	u8                      rsn_ie_len;
@@ -688,7 +699,7 @@ struct slsi_vif_nan {
 	u8 role;
 	u8 state; /* 1 -> nan on; 0 -> nan off */
 	u8 master_pref_value;
-	u8 amt;
+	u8 amr;
 	u8 hopcount;
 	u32 random_mac_interval_sec;
 };
@@ -853,7 +864,7 @@ struct netdev_vif {
 #ifdef CONFIG_SCSC_WIFI_NAN_ENABLE
 	struct slsi_vif_nan         nan;
 #endif
-
+	bool                        acs;
 	/* TCP ack suppression. */
 	struct slsi_tcp_ack_s *last_tcp_ack;
 	struct slsi_tcp_ack_s ack_suppression[TCP_ACK_SUPPRESSION_RECORDS_MAX];
@@ -873,10 +884,13 @@ struct netdev_vif {
 	bool enhanced_arp_detect_enabled;
 	struct slsi_enhanced_arp_counters enhanced_arp_stats;
 	u8 target_ip_addr[4];
-	int enhanced_arp_host_tag[5];
+	int enhanced_arp_host_tag[SLSI_MAX_ARP_SEND_FRAME];
 #endif
 #ifdef CONFIG_SCSC_WLAN_SILENT_RECOVERY
 	struct cfg80211_ap_settings backup_settings;
+#endif
+#ifdef CONFIG_SCSC_WLAN_ARP_FLOW_CONTROL
+	atomic_t                   arp_tx_count;
 #endif
 };
 
@@ -1243,6 +1257,11 @@ struct slsi_dev {
 	struct reg_database regdb;
 	bool require_service_close;
 	bool                       mac_changed;
+#ifdef CONFIG_SCSC_WLAN_ARP_FLOW_CONTROL
+	atomic_t                   ctrl_pause_state;
+	u16                        fw_max_arp_count;
+	atomic_t                   arp_tx_count;
+#endif
 };
 
 /* Compact representation of channels a ESS has been seen on
@@ -1315,12 +1334,18 @@ bool slsi_dev_mac_randomisation_support(void);
 
 static inline u16 slsi_tx_host_tag(struct slsi_dev *sdev, enum slsi_traffic_q tq)
 {
+	u16 host_tag = 0;
+
 	/* host_tag:
 	 * bit 0,1 = trafficqueue identifier
-	 * bit 2-15 = incremental number
-	 * So increment by 4 to get bit 2-15 a incremental sequence
+	 * bit 2-14 = incremental number
+	 * So increment by 4 to get bit 2-14 a incremental sequence
+	 * bit 15 is used for ARP flow control.
 	 */
-	return (u16)atomic_add_return(4, &sdev->tx_host_tag[tq]);
+	host_tag = (u16)atomic_add_return(4, &sdev->tx_host_tag[tq]);
+	host_tag &= ~SLSI_HOST_TAG_ARP_MASK;
+
+	return host_tag;
 }
 
 static inline u16 slsi_tx_mgmt_host_tag(struct slsi_dev *sdev)

@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright (c) 2012 - 2019 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2012 - 2020 Samsung Electronics Co., Ltd. All rights reserved
  *
  *****************************************************************************/
 
@@ -8,7 +8,7 @@
 #include <linux/firmware.h>
 #include <scsc/kic/slsi_kic_lib.h>
 
-#ifdef CONFIG_ARCH_EXYNOS
+#if defined(CONFIG_ARCH_EXYNOS) || defined(CONFIG_ARCH_EXYNOS9)
 #include <linux/soc/samsung/exynos-soc.h>
 #endif
 
@@ -52,6 +52,11 @@
 #define SLSI_MIB_REG_RULES_MAX (50)
 #define SLSI_MIB_MAX_CLIENT (10)
 #define SLSI_REG_PARAM_START_INDEX (1)
+
+#ifdef CONFIG_SCSC_WLAN_ARP_FLOW_CONTROL
+/* To do Autogen for this mib later */
+#define SLSI_PSID_UNIFI_ARP_OUTSTANDING_MAX 0x0A1E
+#endif
 
 static char *mib_file_t = "wlan_t.hcf";
 module_param(mib_file_t, charp, S_IRUGO | S_IWUSR);
@@ -361,7 +366,7 @@ mac_default:
 #endif
 //END IKKANE-6
 
-#ifdef CONFIG_ARCH_EXYNOS
+#if defined(CONFIG_ARCH_EXYNOS) || defined(CONFIG_ARCH_EXYNOS9)
 	/* Randomise MAC address from the soc uid */
 	addr[3] = (exynos_soc_info.unique_id & 0xFF0000000000) >> 40;
 	addr[4] = (exynos_soc_info.unique_id & 0x00FF00000000) >> 32;
@@ -943,6 +948,11 @@ static void slsi_stop_chip(struct slsi_dev *sdev)
 
 	slsi_dbg_track_skb_report();
 	slsi_dbg_track_skb_reset();
+#ifdef CONFIG_SCSC_WLAN_ARP_FLOW_CONTROL
+	if (atomic_read(&sdev->arp_tx_count) && atomic_read(&sdev->ctrl_pause_state))
+		scsc_wifi_unpause_ctrl_q_all_vif(sdev);
+	atomic_set(&sdev->arp_tx_count, 0);
+#endif
 	SLSI_MUTEX_UNLOCK(sdev->device_config_mutex);
 }
 
@@ -1112,6 +1122,11 @@ static void slsi_stop_net_dev_locked(struct slsi_dev *sdev, struct net_device *d
 	slsi_vif_cleanup(sdev, dev, hw_available);
 	ndev_vif->is_available = false;
 	sdev->netdev_up_count--;
+#ifdef CONFIG_SCSC_WLAN_ARP_FLOW_CONTROL
+	if (atomic_read(&ndev_vif->arp_tx_count) && atomic_read(&sdev->ctrl_pause_state))
+		scsc_wifi_unpause_ctrl_q_all_vif(sdev);
+	atomic_set(&ndev_vif->arp_tx_count, 0);
+#endif
 	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 
 	complete_all(&ndev_vif->sig_wait.completion);
@@ -1505,15 +1520,18 @@ static int slsi_mib_initial_get(struct slsi_dev *sdev)
 #ifdef CONFIG_SCSC_WLAN_STA_ENHANCED_ARP_DETECT
 							       { SLSI_PSID_UNIFI_ARP_DETECT_ACTIVATED, {0, 0} },
 #endif
+#ifdef CONFIG_SCSC_WLAN_ARP_FLOW_CONTROL
+							       { SLSI_PSID_UNIFI_ARP_OUTSTANDING_MAX, {0, 0} },
+#endif
 							       { SLSI_PSID_UNIFI_APF_ACTIVATED, {0, 0} },
-							       { SLSI_PSID_UNIFI_SOFT_AP40_MHZ_ON24G, {0, 0} }
+							       { SLSI_PSID_UNIFI_SOFT_AP40_MHZ_ON24G, {0, 0} },
 							      };/*Check the mibrsp.dataLength when a new mib is added*/
 
 	r = slsi_mib_encode_get_list(&mibreq, sizeof(get_values) / sizeof(struct slsi_mib_get_entry), get_values);
 	if (r != SLSI_MIB_STATUS_SUCCESS)
 		return -ENOMEM;
 
-	mibrsp.dataLength = 194;
+	mibrsp.dataLength = 210;
 	mibrsp.data = kmalloc(mibrsp.dataLength, GFP_KERNEL);
 	if (!mibrsp.data) {
 		kfree(mibreq.data);
@@ -1702,6 +1720,23 @@ static int slsi_mib_initial_get(struct slsi_dev *sdev)
 			sdev->device_config.fw_enhanced_arp_detect_supported = values[mib_index].u.boolValue;
 		else
 			SLSI_DBG2(sdev, SLSI_MLME, "Enhanced Arp Detect is disabled!\n");
+#endif
+#ifdef CONFIG_SCSC_WLAN_ARP_FLOW_CONTROL
+		/* Max ARP support in FW */
+		if (values[++mib_index].type != SLSI_MIB_TYPE_NONE) {
+			SLSI_CHECK_TYPE(sdev, values[mib_index].type, SLSI_MIB_TYPE_UINT);
+			sdev->fw_max_arp_count = values[mib_index].u.uintValue;
+			if (sdev->fw_max_arp_count <= SLSI_ARP_UNPAUSE_THRESHOLD) {
+				SLSI_INFO(sdev,
+					  "qlen:%d less. NO ArpFlowControl\n",
+					  sdev->fw_max_arp_count);
+				sdev->fw_max_arp_count = 0;
+			}
+		} else {
+			sdev->fw_max_arp_count = 0;
+			SLSI_DBG3(sdev, SLSI_MLME,
+				  "NO ARP flow control support in FW\n");
+		}
 #endif
 		if (values[++mib_index].type != SLSI_MIB_TYPE_NONE)  /* APF Support */
 			sdev->device_config.fw_apf_supported = values[mib_index].u.boolValue;
@@ -2997,8 +3032,12 @@ int slsi_handle_disconnect(struct slsi_dev *sdev, struct net_device *dev, u8 *pe
 			ndev_vif->sta.assoc_req_add_info_elem = NULL;
 			ndev_vif->sta.assoc_req_add_info_elem_len = 0;
 		}
+		memset(ndev_vif->sta.ssid, 0, ndev_vif->sta.ssid_len);
+		memset(ndev_vif->sta.bssid, 0, ETH_ALEN);
+		ndev_vif->sta.ssid_len = 0;
 #ifdef CONFIG_SCSC_WLAN_STA_ENHANCED_ARP_DETECT
 		memset(&ndev_vif->enhanced_arp_stats, 0, sizeof(ndev_vif->enhanced_arp_stats));
+		memset(ndev_vif->enhanced_arp_host_tag, 0, sizeof(ndev_vif->enhanced_arp_host_tag));
 		ndev_vif->enhanced_arp_detect_enabled = false;
 #endif
 

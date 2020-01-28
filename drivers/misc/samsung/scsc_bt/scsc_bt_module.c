@@ -26,7 +26,7 @@
 #include <linux/delay.h>
 #include <linux/seq_file.h>
 
-#ifdef CONFIG_ARCH_EXYNOS
+#if defined(CONFIG_ARCH_EXYNOS) || defined(CONFIG_ARCH_EXYNOS9)
 #include <linux/soc/samsung/exynos-soc.h>
 #endif
 
@@ -83,7 +83,7 @@ static int ant_service_start_count;
 #endif
 
 static u64 bluetooth_address;
-#ifdef CONFIG_ARCH_EXYNOS
+#if defined(CONFIG_ARCH_EXYNOS) || defined(CONFIG_ARCH_EXYNOS9)
 static char bluetooth_address_fallback[] = "00:00:00:00:00:00";
 #endif
 static u32 bt_info_trigger;
@@ -102,7 +102,7 @@ module_param(bluetooth_address, ullong, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(bluetooth_address,
 		 "Bluetooth address");
 
-#ifdef CONFIG_ARCH_EXYNOS
+#if defined(CONFIG_ARCH_EXYNOS) || defined(CONFIG_ARCH_EXYNOS9)
 module_param_string(bluetooth_address_fallback, bluetooth_address_fallback,
 		    sizeof(bluetooth_address_fallback), 0444);
 MODULE_PARM_DESC(bluetooth_address_fallback,
@@ -700,7 +700,7 @@ static int setup_bhcs(struct scsc_service *service,
 		firm = NULL;
 	}
 
-#ifdef CONFIG_ARCH_EXYNOS
+#if defined(CONFIG_ARCH_EXYNOS) || defined(CONFIG_ARCH_EXYNOS9)
 	bhcs->bluetooth_address_nap =
 		(exynos_soc_info.unique_id & 0x000000FFFF00) >> 8;
 	bhcs->bluetooth_address_uap =
@@ -2227,7 +2227,7 @@ static int __init scsc_bt_module_init(void)
 		(exynos_soc_info.unique_id & 0xFF0000000000) >> 40,
 		(exynos_soc_info.unique_id & 0x00FF00000000) >> 32,
 		(exynos_soc_info.unique_id & 0x0000FF000000) >> 24);
-#elif CONFIG_ARCH_EXYNOS
+#elif defined(CONFIG_ARCH_EXYNOS) || defined(CONFIG_ARCH_EXYNOS9)
 	sprintf(bluetooth_address_fallback, "%02X:%02X:%02X:%02X:%02X:%02X",
 		(exynos_soc_info.unique_id & 0x000000FF0000) >> 16,
 		(exynos_soc_info.unique_id & 0x00000000FF00) >> 8,

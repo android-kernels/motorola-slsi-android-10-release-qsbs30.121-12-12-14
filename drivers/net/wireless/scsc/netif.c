@@ -213,7 +213,7 @@ static int slsi_net_open(struct net_device *dev)
 #endif
 		sdev->initial_scan = true;
 	}
-
+	ndev_vif->acs = false;
 	memset(dev_addr_zero_check, 0, ETH_ALEN);
 	if (!memcmp(dev->dev_addr, dev_addr_zero_check, ETH_ALEN)) {
 #if defined(CONFIG_SCSC_WLAN_WIFI_SHARING) || defined(CONFIG_SCSC_WLAN_DUAL_STATION)
@@ -281,7 +281,7 @@ static int slsi_net_stop(struct net_device *dev)
 	slsi_wakelock(&sdev->wlan_wl);
 	netif_tx_stop_all_queues(dev);
 	sdev->initial_scan = false;
-
+	ndev_vif->acs = false;
 	if (!ndev_vif->is_available) {
 		/* May have been taken out by the Chip going down */
 		SLSI_NET_DBG1(dev, SLSI_NETDEV, "Not available\n");
@@ -298,7 +298,6 @@ static int slsi_net_stop(struct net_device *dev)
 	slsi_netif_tcp_ack_suppression_stop(dev);
 #endif
 	slsi_stop_net_dev(sdev, dev);
-
 	sdev->allow_switch_40_mhz = true;
 	sdev->allow_switch_80_mhz = true;
 	sdev->acs_channel_switched = false;
